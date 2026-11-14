@@ -370,6 +370,145 @@ class Workflows(unittest.TestCase):
         finally:
             another.extensions['jobs'].executor.shutdown(wait=True)
 
+    def camera_project(self, width=16, height=16, panes=None, keys=None):
+        """Three layers: back (200), middle (100), front (50)."""
+        from flipbook.model import new_layer
+        project = self.new(width, height)
+        key = project['id']
+        with self.store.edit(key, project['revision'], '搭建多平面测试') as working:
+            frame = working['frames'][0]
+            frame['layers'] = []
+            for name, color in [('背景', '#ff0000ff'), ('角色', '#00ff00ff'), ('前景', '#0000ffff')]:
+                image = Image.new('RGBA', (width, height))
+                image.paste(color, (width // 2 - 1, height // 2 - 1, width // 2 + 1, height // 2 + 1))
+                frame['layers'].append(new_layer(name, self.store.put_image(key, image)))
+        project = self.store.get(key)
+        defaults = [{'layer_id': layer['id'], 'depth': depth, 'visible': True}
+                    for layer, depth in zip(project['frames'][0]['layers'], [200, 100, 50])]
+        body = {'revision': project['revision'], 'duration': 1000, 'fps': 10, 'near': 2,
+                'panes': panes or defaults,
+                'keys': keys or [{'time': 0, 'x': 0, 'y': 0, 'z': 0, 'focal': 100},
+                                 {'time': 1000, 'x': 40, 'y': 0, 'z': 0, 'focal': 100}]}
+        return self.call('POST', self.base(project) + '/camera', body, 201)
+
+    def test_camera_parallax_scales_with_depth(self):
+        from flipbook import camera
+        project = self.camera_project()
+        rig = project['camera']
+        state = camera.evaluate(project, rig, 1000)
+        panes = {pane['name']: pane for pane in state['panes']}
+        self.assertGreater(panes['前景']['scale'], panes['角色']['scale'])
+        self.assertGreater(panes['角色']['scale'], panes['背景']['scale'])
+        self.assertLess(abs(panes['背景']['offset_x']), abs(panes['角色']['offset_x']))
+        self.assertLess(abs(panes['角色']['offset_x']), abs(panes['前景']['offset_x']))
+        self.assertAlmostEqual(panes['角色']['offset_x'], -40 * 1.0)
+        self.assertAlmostEqual(panes['背景']['offset_x'], -40 * .5)
+        self.assertEqual(panes['前景']['scale'], 2.0)
+
+    def test_camera_near_clip_drops_instead_of_flipping(self):
+        from flipbook import camera
+        project = self.camera_project(keys=[{'time': 0, 'x': 0, 'y': 0, 'z': 0, 'focal': 100},
+                                            {'time': 1000, 'x': 0, 'y': 0, 'z': 49, 'focal': 100}])
+        rig = project['camera']
+        end = camera.evaluate(project, rig, 1000)
+        front = next(pane for pane in end['panes'] if pane['name'] == '前景')
+        self.assertEqual(front['distance'], 1.0)
+        self.assertTrue(front['clipped'])
+        self.assertFalse(front['visible'])
+        self.assertIsNone(front['scale'])
+        self.assertEqual(end['clipped_count'], 1)
+        for time in [0, 200, 400, 600, 800, 1000]:
+            state = camera.evaluate(project, rig, time)
+            front = next(pane for pane in state['panes'] if pane['name'] == '前景')
+            self.assertGreaterEqual(front['distance'], 1.0)
+            if front['clipped']:
+                self.assertIsNone(front['scale'])
+                self.assertIsNone(front['offset_x'])
+        before = np.asarray(camera.render(self.store, project, rig, 0))
+        after = np.asarray(camera.render(self.store, project, rig, 1000))
+        center = (8, 8)
+        self.assertEqual(before[center[1], center[0], 2], 255)
+        self.assertEqual(before[center[1], center[0], 3], 255)
+        self.assertEqual(after[center[1], center[0], 1], 255)
+        self.assertFalse(np.any(after[:, :, 2] == 255))
+
+    def test_camera_preview_and_export_share_projection(self):
+        project = self.camera_project()
+        key = self.base(project)
+        data = self.call('GET', key + '/camera/frame?time=0')
+        expected = Image.open(io.BytesIO(data)).convert('RGBA')
+        response = self.client.post(key + '/camera/export', json={'container': 'apng', 'revision': project['revision']})
+        self.assertEqual(response.status_code, 200, response.data[:200])
+        with Image.open(io.BytesIO(response.data)) as animation:
+            self.assertGreaterEqual(animation.n_frames, 1)
+            animation.seek(0)
+            np.testing.assert_array_equal(np.asarray(animation.convert('RGBA')), np.asarray(expected))
+            self.assertEqual(animation.info.get('loop'), 0)
+        from flipbook import camera as camera_module
+        times, total = camera_module.render_times(project['camera'])
+        self.assertEqual(total, 1000)
+        self.assertEqual(len(times), 10)
+        self.assertEqual([item['duration'] for item in times], [100] * 10)
+
+    def test_camera_edits_keep_source_pixels(self):
+        project = self.camera_project()
+        key = self.base(project)
+        before = np.asarray(self.image(project)).copy()
+        fn = project['frames'][0]['layers'][2]['id']
+        project = self.mutate(project, 'camera/panes', {'layer_id': fn, 'depth': 30, 'cover': True})
+        self.assertEqual(project['camera']['panes'][0]['depth'], 30)
+        np.testing.assert_array_equal(np.asarray(self.image(project)), before)
+        response = self.client.get(key + '/camera/frame?time=0')
+        self.assertEqual(response.status_code, 200)
+        response = self.client.get(key + '/camera/frame?time=0&report=true')
+        self.assertEqual(response.status_code, 200)
+        project = self.mutate(project, 'camera', {}, 'DELETE')
+        self.assertNotIn('camera', project)
+        np.testing.assert_array_equal(np.asarray(self.image(project)), before)
+
+    def test_camera_key_point_validation(self):
+        project = self.camera_project()
+        key = self.base(project)
+        for keys in [[{'time': 500, 'x': 0, 'y': 0, 'z': 0, 'focal': 100}, {'time': 500, 'x': 1, 'y': 0, 'z': 0, 'focal': 100}],
+                     [{'time': 2000, 'x': 0, 'y': 0, 'z': 0, 'focal': 100}]]:
+            response = self.client.patch(key + '/camera', json={'revision': project['revision'], 'keys': keys})
+            self.assertEqual(response.status_code, 400, response.json)
+        response = self.client.patch(key + '/camera', json={'revision': project['revision'], 'keys': [
+            {'time': 0, 'x': 0, 'y': 0, 'z': 0, 'focal': 100},
+            {'time': 500, 'x': 10, 'y': 4, 'z': 8, 'focal': 120}], 'duration': 500})
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(response.json['camera']['duration'], 500)
+
+    def test_camera_removed_with_source_frame(self):
+        project = self.camera_project()
+        frame_id = project['frames'][0]['id']
+        response = self.client.post(self.base(project) + '/frames/remove',
+                                    json={'revision': project['revision'], 'frame_ids': [frame_id]})
+        self.assertEqual(response.status_code, 400)
+        project = self.mutate(project, 'frames', {'after': frame_id, 'count': 1})
+        response = self.client.post(self.base(project) + '/frames/remove',
+                                    json={'revision': project['revision'], 'frame_ids': [frame_id]})
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertNotIn('camera', response.json)
+
+    def test_camera_demo_and_job_export(self):
+        project = self.demo('depth')
+        self.assertIn('camera', project)
+        self.assertEqual([layer['name'] for layer in project['frames'][0]['layers']],
+                         ['天空', '远山', '角色', '前景'])
+        info = self.call('GET', self.base(project) + '/camera')
+        self.assertEqual(info['preview_frames'], 19)
+        job = self.call('POST', self.base(project) + '/jobs',
+                        {'format': 'camera-apng', 'revision': project['revision']}, 202)
+        self.app.extensions['jobs'].futures[job['id']].result(timeout=30)
+        finished = self.call('GET', '/api/jobs/' + job['id'])
+        self.assertEqual(finished['status'], 'completed', finished)
+        self.assertTrue(finished['details']['transparent'])
+        data = self.call('GET', '/api/jobs/' + job['id'] + '/download')
+        with Image.open(io.BytesIO(data)) as animation:
+            self.assertEqual(animation.n_frames, 19)
+            self.assertEqual(sum(animation.seek(i) or animation.info['duration'] for i in range(animation.n_frames)), 1600)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

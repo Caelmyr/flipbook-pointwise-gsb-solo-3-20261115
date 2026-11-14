@@ -1,7 +1,7 @@
 from copy import deepcopy
 from PIL import Image
 from . import validate as v
-from .model import find_frame, new_frame, clone_frame, new_id
+from .model import find_frame, new_frame, clone_frame, new_id, remove_camera_for_frames
 
 
 class Timeline:
@@ -36,6 +36,7 @@ class Timeline:
                 if 'exposures' in clip:
                     clip['exposures'] = [item for item in clip['exposures'] if item['frame_id'] not in ids]
             project['clips'] = [clip for clip in project['clips'] if clip['frame_ids']]
+            remove_camera_for_frames(project, ids)
         return self.store.get(project_id)
 
     def reorder(self, project_id, revision, ids):

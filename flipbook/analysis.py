@@ -165,6 +165,9 @@ def duplicate_cleanup(store, project_id, revision, adjacent_only=True):
             clip['frame_ids'] = list(dict.fromkeys(ids))
         for tilemap in project['tilemaps']:
             tilemap['tiles'] = [removed.get(key, key) for key in tilemap['tiles']]
+        camera = project.get('camera')
+        if camera and camera.get('source_frame') in removed:
+            camera['source_frame'] = removed[camera['source_frame']]
     return store.get(project_id)
 
 

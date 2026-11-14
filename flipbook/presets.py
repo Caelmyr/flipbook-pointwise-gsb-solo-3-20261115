@@ -91,7 +91,91 @@ def tiles(size, index):
     return image
 
 
+def depth_scene(size):
+    """Four separate planes for the multiplane camera demo: sky, hills, character, foreground."""
+    width, height = size
+    sky = Image.new('RGBA', size)
+    draw = ImageDraw.Draw(sky)
+    for y in range(height):
+        blend = y / max(1, height - 1)
+        color = (int(22 + 26 * blend), int(33 + 48 * blend), int(58 + 64 * blend), 255)
+        draw.line((0, y, width, y), fill=color)
+    for x, y in [(9, 12), (21, 7), (34, 15), (47, 9), (58, 18), (70, 6), (83, 13), (92, 20)]:
+        draw.point((x, y), fill='#e8f3ffff')
+    hills = Image.new('RGBA', size)
+    draw = ImageDraw.Draw(hills)
+    for base, color, step in [(height * .56, '#2c5566ff', 9), (height * .68, '#203f50ff', 7)]:
+        points = [(0, height)]
+        for x in range(0, width + 1, step):
+            y = base + math.sin(x / 11) * 5 + math.cos(x / 7) * 2
+            points.append((x, int(y)))
+        points.append((width, height))
+        draw.polygon(points, fill=color)
+    for x in range(4, width, 13):
+        draw.rectangle((x, int(height * .72), x + 1, int(height * .78)), fill='#8aa7b5ff')
+    character = Image.new('RGBA', size)
+    draw = ImageDraw.Draw(character)
+    cx, cy = width // 2, int(height * .62)
+    draw.ellipse((cx - 9, cy + 12, cx + 9, cy + 17), fill='#00000066')
+    draw.rectangle((cx - 4, cy - 10, cx + 4, cy + 4), fill='#66e2bdff')
+    draw.rectangle((cx - 6, cy - 18, cx + 6, cy - 10), fill='#66e2bdff')
+    draw.rectangle((cx - 5, cy - 16, cx + 5, cy - 12), fill='#152437ff')
+    draw.rectangle((cx - 3, cy - 15, cx - 1, cy - 13), fill='#f8cc65ff')
+    draw.rectangle((cx + 1, cy - 15, cx + 3, cy - 13), fill='#f8cc65ff')
+    draw.rectangle((cx - 4, cy + 4, cx - 2, cy + 12), fill='#8b9cffff')
+    draw.rectangle((cx + 2, cy + 4, cx + 4, cy + 12), fill='#8b9cffff')
+    draw.rectangle((cx - 8, cy - 6, cx - 5, cy + 2), fill='#8b9cffff')
+    draw.rectangle((cx + 5, cy - 6, cx + 8, cy + 2), fill='#8b9cffff')
+    draw.rectangle((cx - 1, cy - 22, cx + 1, cy - 18), fill='#f8cc65ff')
+    foreground = Image.new('RGBA', size)
+    draw = ImageDraw.Draw(foreground)
+    draw.rectangle((0, height - 8, width, height), fill='#173a2dff')
+    for x in range(0, width, 5):
+        draw.line((x, height - 8, x + 2, height - 14), fill='#2b6b4bff')
+    draw.polygon([(0, height), (0, height - 26), (16, height - 20), (26, height)], fill='#0f2d23ff')
+    draw.polygon([(width - 30, height), (width - 22, height - 30), (width, height - 24), (width, height)], fill='#0f2d23ff')
+    return {'天空': sky, '远山': hills, '角色': character, '前景': foreground}
+
+
+def create_depth_demo(store):
+    size = (96, 64)
+    project = store.create('纵深街道 · 多平面摄影机', *size)
+    with store.edit(project['id'], 0, '创建多平面纵深演示') as working:
+        working['frames'] = []
+        working['palette'] = PALETTE[:]
+        blank = store.put_image(project['id'], Image.new('RGBA', size))
+        frame = new_frame(blank, '镜头原画', 1200)
+        frame['layers'] = []
+        depths = {'天空': 320.0, '远山': 180.0, '角色': 90.0, '前景': 50.0}
+        for name, image in depth_scene(size).items():
+            asset = store.put_image(project['id'], image)
+            frame['layers'].append(new_layer(name, asset))
+        working['frames'].append(frame)
+        working['clips'] = [{'id': new_id(), 'name': '纵深推进', 'frame_ids': [frame['id']],
+                             'direction': 'forward', 'repeat': 0}]
+        working['camera'] = {
+            'enabled': True,
+            'source_frame': frame['id'],
+            'duration': 1600,
+            'fps': 12,
+            'near': 2.0,
+            'sampling': 'nearest',
+            'panes': [{'layer_id': layer['id'], 'depth': depths[layer['name']], 'visible': True,
+                       'cover': layer['name'] in ('天空', '远山')}
+                      for layer in frame['layers']],
+            'keys': [
+                {'time': 0, 'x': -10, 'y': 2, 'z': 0, 'focal': 100, 'easing': 'ease_in_out'},
+                {'time': 800, 'x': 0, 'y': 0, 'z': 10, 'focal': 104, 'easing': 'ease_in_out'},
+                {'time': 1600, 'x': 12, 'y': -2, 'z': 20, 'focal': 106, 'easing': 'ease_out'},
+            ],
+        }
+        working['notes'] = '背景、远山、角色和前景分为独立图层，用多平面摄影机同时推进与横移。图层像素与位置保留，重新调镜头从原画计算。'
+    return store.get(project['id'])
+
+
 def create_demo(store, kind='robot'):
+    if kind == 'depth':
+        return create_depth_demo(store)
     v.choice(kind, '演示主题', ['robot', 'flame', 'orb', 'tiles'])
     names = {'robot': '薄荷机器人 · 像素行走', 'flame': '火焰 · 循环特效', 'orb': '星能球 · 透明动画', 'tiles': '地形瓦片 · 关卡素材'}
     size = (64, 64) if kind != 'tiles' else (32, 32)

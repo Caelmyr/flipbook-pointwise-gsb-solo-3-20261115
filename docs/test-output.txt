@@ -5,6 +5,13 @@ test_app_reload_persistence (test_workflows.Workflows.test_app_reload_persistenc
 test_archive_rejects_traversal_and_missing_assets (test_workflows.Workflows.test_archive_rejects_traversal_and_missing_assets) ... ok
 test_atlas_pixel_roundtrip_and_no_overlaps (test_workflows.Workflows.test_atlas_pixel_roundtrip_and_no_overlaps) ... ok
 test_auto_sprite_slice (test_workflows.Workflows.test_auto_sprite_slice) ... ok
+test_camera_demo_and_job_export (test_workflows.Workflows.test_camera_demo_and_job_export) ... ok
+test_camera_edits_keep_source_pixels (test_workflows.Workflows.test_camera_edits_keep_source_pixels) ... ok
+test_camera_key_point_validation (test_workflows.Workflows.test_camera_key_point_validation) ... ok
+test_camera_near_clip_drops_instead_of_flipping (test_workflows.Workflows.test_camera_near_clip_drops_instead_of_flipping) ... ok
+test_camera_parallax_scales_with_depth (test_workflows.Workflows.test_camera_parallax_scales_with_depth) ... ok
+test_camera_preview_and_export_share_projection (test_workflows.Workflows.test_camera_preview_and_export_share_projection) ... ok
+test_camera_removed_with_source_frame (test_workflows.Workflows.test_camera_removed_with_source_frame) ... ok
 test_crossfade_preserves_unassociated_color (test_workflows.Workflows.test_crossfade_preserves_unassociated_color) ... ok
 test_export_jobs_all_formats (test_workflows.Workflows.test_export_jobs_all_formats) ... ok
 test_flood_fill_stays_inside_shape (test_workflows.Workflows.test_flood_fill_stays_inside_shape) ... ok
@@ -31,6 +38,6 @@ test_time_resample_total_preserved (test_workflows.Workflows.test_time_resample_
 test_transform_tween_end_state (test_workflows.Workflows.test_transform_tween_end_state) ... ok
 
 ----------------------------------------------------------------------
-Ran 31 tests in 1.112s
+Ran 38 tests in 1.303s
 
 OK

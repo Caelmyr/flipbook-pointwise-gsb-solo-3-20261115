@@ -70,6 +70,8 @@ class Snapshots:
             for key, value in restored.items():
                 if key not in ('id', 'revision', 'undo', 'redo', 'created_at', 'updated_at'):
                     project[key] = value
+            if 'camera' not in restored:
+                project.pop('camera', None)
         return self.store.get(project_id)
 
     def fork(self, project_id, snapshot_id):

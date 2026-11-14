@@ -16,6 +16,8 @@ FORMATS = {
     'sheet': ('sheet.zip', 'application/zip'),
     'project': ('project.zip', 'application/zip'),
     'palette': ('palette.zip', 'application/zip'),
+    'camera-apng': ('camera.png', 'image/png'),
+    'camera-webp': ('camera.webp', 'image/webp'),
 }
 
 
@@ -56,10 +58,19 @@ class Jobs:
     def start(self, project_id, body):
         kind = v.choice(body.get('format', 'apng'), '导出格式', FORMATS)
         with self.store.lock:
+            snapshot = self.store.get(project_id)
+            if kind in ('camera-apng', 'camera-webp'):
+                rig = snapshot.get('camera')
+                if not rig:
+                    raise v.Invalid('请先建立多平面摄影机')
+                if not rig.get('enabled', True):
+                    raise v.Invalid('多平面摄影机已停用')
+                count = max(1, int(round(rig['duration'] * rig['fps'] / 1000)))
+                if count > 300:
+                    raise v.Invalid('摄影机动画超过300帧，请降低帧率或缩短镜头')
             active = [job for job in self.list() if job['status'] in ('queued', 'running', 'cancelling')]
             if len(active) >= 5:
                 raise v.Invalid('最多排队5个导出任务')
-            snapshot = self.store.get(project_id)
             if 'revision' in body and v.revision(body) != snapshot['revision']:
                 raise v.Conflict('项目已修改，请刷新后导出')
             job_id = new_id()
@@ -119,6 +130,9 @@ class Jobs:
                 data, details = sheet_zip(self.store, project, body)
             elif job['format'] == 'palette':
                 data = palette_files(project)
+            elif job['format'] in ('camera-apng', 'camera-webp'):
+                from .camera import render_animation
+                data, details = render_animation(self.store, project, job['format'].split('-')[1])
             else:
                 data = project_bundle(self.store, project)
             with self.store.lock:

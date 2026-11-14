@@ -17,6 +17,7 @@ from .contracts import check_assets, export_preflight
 from .reports import project_report
 from .presets import create_demo
 from .palettes import ramp, color_inventory
+from . import camera as multiplane
 
 
 def body():
@@ -748,5 +749,84 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
         payload = bundle(store, key, identifier, number)
         return send_file(io.BytesIO(payload), mimetype='application/zip', as_attachment=True,
                          download_name=f'atlas-version-{number}.zip')
+
+    @api.get('/projects/<key>/camera')
+    def camera_info(key):
+        with store.lock:
+            project = store.get(key)
+            rig = project.get('camera')
+            if rig is None:
+                return jsonify({'camera': None})
+            return jsonify(multiplane.info(store, project, rig))
+
+    @api.post('/projects/<key>/camera')
+    def camera_create(key):
+        data = body()
+        return jsonify(multiplane.create(store, key, v.revision(data), data)), 201
+
+    @api.patch('/projects/<key>/camera')
+    def camera_update(key):
+        data = body()
+        return jsonify(multiplane.update(store, key, v.revision(data), data))
+
+    @api.delete('/projects/<key>/camera')
+    def camera_delete(key):
+        data = body()
+        return jsonify(multiplane.remove(store, key, v.revision(data)))
+
+    @api.post('/projects/<key>/camera/panes')
+    def camera_pane(key):
+        data = body()
+        return jsonify(multiplane.set_pane(store, key, v.revision(data), data))
+
+    @api.get('/projects/<key>/camera/frame')
+    def camera_frame(key):
+        time = v.real(request.args.get('time', 0), '摄影机时间毫秒', 0, 1000000)
+        report = request.args.get('report') == 'true'
+        with store.lock:
+            project = store.get(key)
+            rig = project.get('camera')
+            if rig is None:
+                raise v.Invalid('请先建立多平面摄影机')
+            if report:
+                return jsonify(multiplane.evaluate(project, rig, time))
+            image = multiplane.render(store, project, rig, time)
+            state = multiplane.evaluate(project, rig, time)
+            headers = {
+                'X-Camera-Time': str(state['time']),
+                'X-Camera-Clipped': str(state['clipped_count']),
+                'X-Camera-Visible': str(state['visible_count']),
+            }
+            return Response(png_bytes(image), mimetype='image/png',
+                            headers={'Cache-Control': 'no-store', **headers})
+
+    @api.get('/projects/<key>/camera/poses')
+    def camera_poses(key):
+        with store.lock:
+            project = store.get(key)
+            rig = project.get('camera')
+            if rig is None:
+                raise v.Invalid('请先建立多平面摄影机')
+            times, total = multiplane.render_times(rig)
+            samples = [multiplane.evaluate(project, rig, item['time']) for item in times]
+            return jsonify({'duration': total, 'near': rig['near'], 'samples': samples})
+
+    @api.post('/projects/<key>/camera/export')
+    def camera_export(key):
+        data = body()
+        container = v.choice(data.get('container', 'apng'), '摄影机导出容器', ['apng', 'webp'])
+        with store.lock:
+            project = store.get(key)
+            rig = project.get('camera')
+            if rig is None:
+                raise v.Invalid('请先建立多平面摄影机')
+            if not rig.get('enabled', True):
+                raise v.Invalid('多平面摄影机已停用')
+            data_out, details = multiplane.render_animation(store, project, container)
+        name = 'camera.' + ('webp' if container == 'webp' else 'png')
+        mimetype = 'image/webp' if container == 'webp' else 'image/png'
+        response = send_file(io.BytesIO(data_out), mimetype=mimetype, as_attachment=True, download_name=name)
+        response.headers['X-Camera-Details'] = json.dumps(details, ensure_ascii=False)
+        return response
 
     return api

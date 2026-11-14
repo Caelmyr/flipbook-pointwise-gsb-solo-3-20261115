@@ -71,6 +71,12 @@ def find_frame(project, frame_id):
     return frame
 
 
+def remove_camera_for_frames(project, frame_ids):
+    rig = project.get('camera')
+    if rig and rig.get('source_frame') in frame_ids:
+        project.pop('camera')
+
+
 def find_layer(project, frame_id, layer_id):
     frame = find_frame(project, frame_id)
     v.key(layer_id)
@@ -124,6 +130,9 @@ def validate_structure(project):
     if 'ink_roles' in project:
         from .role_tools import validate_entries
         validate_entries(project['ink_roles'])
+    if project.get('camera') is not None:
+        from .camera import validate_rig
+        validate_rig(project, project['camera'])
     if project.get('schema') != SCHEMA:
         raise v.Invalid('不支持的项目版本')
     v.key(project.get('id'))

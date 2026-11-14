@@ -74,6 +74,7 @@ async function acceptProject(p){
   $('timelineInfo').textContent=`${p.frames.length} 帧 / ${p.frames.reduce((a,f)=>a+f.duration,0)} ms · 已勾选 ${S.selected.size} 帧`;
   $('undo').disabled=!p.undo.length;$('redo').disabled=!p.redo.length;renderRoleChoices();renderPalette();renderFrames();renderLayers();loadCanvas();await refreshListOnly();
   const value=$('clipSelect').value;$('clipSelect').replaceChildren(new Option('完整时间轴',''));for(const clip of p.clips)$('clipSelect').append(new Option(clip.name,clip.id));if(p.clips.some(c=>c.id===value))$('clipSelect').value=value;
+  $('camera').textContent=p.camera?'多平面摄影机 ·'+Math.round(p.camera.duration)+'ms':'多平面摄影机';
 }
 async function refreshListOnly(){
   const current=S.project;const query=new URLSearchParams({query:$('search').value,archived:$('archived').checked});S.projects=await api('/api/projects?'+query);$('projectCount').textContent=S.projects.length;$('projectList').replaceChildren();for(const p of S.projects){const card=element('div',undefined,'project-card');card.classList.toggle('active',current?.id===p.id);card.dataset.id=p.id;const img=element('img');img.src=`/api/projects/${p.id}/frames/${p.thumbnail_frame}/image?rev=${p.revision}`;img.alt=p.name;card.append(img,element('b',p.name),element('small',`${p.width}×${p.height} · ${p.frame_count}帧 · ${p.duration}ms`));card.onclick=guard(()=>openProject(p.id));$('projectList').append(card)}
@@ -178,8 +179,10 @@ $('imports').onclick=guard(()=>{
 $('export').onclick=guard(openExport);
 async function openExport(){
   project();const body=dialog('导出动画与游戏素材'),layout=element('div',undefined,'dialog-grid'),controls=element('div'),output=element('div',undefined,'tool-output');
-  const fields=[select('format','导出格式','apng',[['apng','APNG透明动画'],['gif','GIF动画'],['webp','无损WebP动画'],['sequence','PNG序列与时间轴'],['atlas','紧凑精灵图集'],['multipage','多页精灵图集'],['sheet','规则序列图'],['project','可编辑项目归档'],['palette','调色板文件包']]),num('scale','动画/序列输出倍率',1,1,8),num('columns','规则序列图列数',6,1,64),num('padding','图集间隔',1,0,16),num('extrude','图集边缘外扩',1,0,8),num('atlas_width','单页图集宽（0为自动）',0,0,4096),num('atlas_height','单页图集高（0为自动）',0,0,4096),num('page_width','多页图集每页宽',256,32,4096),num('page_height','多页图集每页高',256,32,4096),check('trim','裁去透明边缘',true),check('rotate','允许图集旋转'),check('background','使用项目背景颜色')];
-  controls.append(element('p','默认使用勾选帧，未勾选时导出全部。编码绑定当前项目修订，后续编辑不会改变已排队作品。GIF会使用二值透明与10ms时长。','hint'));controls.append(form(fields,'创建导出任务',async data=>{if(data.format==='atlas'&&(data.atlas_width||data.atlas_height)){if(!data.atlas_width||!data.atlas_height)throw Error('单页图集宽高需同时指定');data.size=[data.atlas_width,data.atlas_height]}delete data.atlas_width;delete data.atlas_height;const job=await post(endpoint('jobs'),{...data,frame_ids:ids(),clip_id:$('clipSelect').value||undefined,revision:project().revision});status('已创建导出任务 '+job.format);await renderJobs(output);if(!jobTimer)jobTimer=setInterval(()=>renderJobs(output).catch(e=>status(e.message,true)),2000)}));
+  const formats=[['apng','APNG透明动画'],['gif','GIF动画'],['webp','无损WebP动画'],['sequence','PNG序列与时间轴'],['atlas','紧凑精灵图集'],['multipage','多页精灵图集'],['sheet','规则序列图'],['project','可编辑项目归档'],['palette','调色板文件包']];
+  if(project().camera&&project().camera.enabled)formats.push(['camera-apng','多平面摄影机透明APNG'],['camera-webp','多平面摄影机透明WebP']);
+  const fields=[select('format','导出格式','apng',formats),num('scale','动画/序列输出倍率',1,1,8),num('columns','规则序列图列数',6,1,64),num('padding','图集间隔',1,0,16),num('extrude','图集边缘外扩',1,0,8),num('atlas_width','单页图集宽（0为自动）',0,0,4096),num('atlas_height','单页图集高（0为自动）',0,0,4096),num('page_width','多页图集每页宽',256,32,4096),num('page_height','多页图集每页高',256,32,4096),check('trim','裁去透明边缘',true),check('rotate','允许图集旋转'),check('background','使用项目背景颜色')];
+  controls.append(element('p','默认使用勾选帧，未勾选时导出全部。编码绑定当前项目修订，后续编辑不会改变已排队作品。GIF会使用二值透明与10ms时长。摄影机格式按图层深度与关键点从原画重新投影，与工作区预览一致。','hint'));controls.append(form(fields,'创建导出任务',async data=>{if(data.format==='atlas'&&(data.atlas_width||data.atlas_height)){if(!data.atlas_width||!data.atlas_height)throw Error('单页图集宽高需同时指定');data.size=[data.atlas_width,data.atlas_height]}delete data.atlas_width;delete data.atlas_height;const job=await post(endpoint('jobs'),{...data,frame_ids:ids(),clip_id:$('clipSelect').value||undefined,revision:project().revision});status('已创建导出任务 '+job.format);await renderJobs(output);if(!jobTimer)jobTimer=setInterval(()=>renderJobs(output).catch(e=>status(e.message,true)),2000)}));
   const atlas=element('button','预览紧凑图集');atlas.onclick=guard(async()=>{const blob=await work('生成图集预览…',()=>post(endpoint('atlas-preview'),{frame_ids:ids(),trim:true,padding:1,extrude:1,rotate:false}));const target=dialog('图集预览');showBlob(blob,target,'atlas-preview.png')});controls.append(atlas);
   const report=element('a','打开可打印制作报告');report.href=endpoint('report');report.target='_blank';report.rel='noopener';const csv=element('a','下载时间轴CSV');csv.href=endpoint('timeline.csv');const collision=element('a','下载枢轴与碰撞元数据JSON');collision.href=endpoint('collision-metadata');collision.download='collision-metadata.json';controls.append(element('p'),report,element('p'),csv,element('p'),collision);layout.append(controls,output);body.append(layout);await renderJobs(output);jobTimer=setInterval(()=>renderJobs(output).catch(e=>status(e.message,true)),2000);
 }
@@ -301,3 +304,163 @@ async function openAtlasWorkspace(identifier){
   body.append(element('h3','另建图集工程'));
   body.append(form([text('name','工程名称','游戏图集'),num('width','图集宽',256,32,2048),num('height','图集高',256,32,2048),num('reserve','每侧原画预留像素',4,0,32),num('padding','图块间隔',1,0,16),num('extrude','边缘外扩',1,0,8),check('rotate','允许旋转')],'创建图集工程',async values=>{await mutate('建立图集工程…',endpoint('atlas-workspaces'),values);await openAtlasWorkspace(project().atlas_workspaces.at(-1).id)}));
 }
+
+/* 多平面摄影机工作区：图层深度、摄影机关键点、时间拖动预览与透明动画生成 */
+let cameraRAF=null;
+function stopCameraPlay(){if(cameraRAF)cancelAnimationFrame(cameraRAF);cameraRAF=null}
+$('camera').onclick=guard(openCamera);
+
+async function openCamera(){
+  project();
+  const body=dialog('多平面摄影机工作区');
+  let info=await api(endpoint('camera'));
+  if(!info.camera){
+    body.append(element('p','把背景、角色和前景放在不同深度上，建立摄影机后可用位置与焦距关键点拍摄有纵深的镜头。原始图层像素与位置保留，重新调整镜头都从这份原画重新计算，不逐层猜平移量。','hint'));
+    const frameSelect=select('source_frame','原画来源帧',currentFrame().id,frameChoices());
+    body.append(form([
+      frameSelect,
+      num('duration','镜头时长毫秒',1600,50,30000),
+      num('fps','采样帧率',12,1,50),
+      num('near','近裁切距离',2,.01,5000),
+      num('default_depth','默认图层深度',100,.01,5000),
+      num('focal','初始焦距',100,.1,10000),
+      select('sampling','投影采样方式','nearest',[['nearest','最近邻（像素画）'],['bilinear','双线性']]),
+    ],'建立多平面摄影机',async data=>{
+      const result=await mutate('建立多平面摄影机…',endpoint('camera'),data);
+      S.cameraTime=0;await acceptProject(result);await openCamera();
+    }));
+    return;
+  }
+  S.cameraTime=Math.min(S.cameraTime??0,info.camera.duration);
+  const layout=element('div',undefined,'camera-layout'),left=element('div'),right=element('div');
+  layout.append(left,right);body.append(layout);
+  const previewWrap=element('div',undefined,'camera-stage'),preview=element('img'),transport=element('div',undefined,'camera-transport');
+  preview.className='preview';preview.alt='多平面摄影机预览';
+  const playButton=element('button','▶ 播放');playButton.className='primary';
+  const range=element('input');range.type='range';range.min='0';range.max=String(info.camera.duration);range.step='1';range.value=String(S.cameraTime);range.setAttribute('aria-label','摄影机时间');
+  const timeLabel=element('span','0 ms','camera-time');const clipLabel=element('span','','camera-clip');
+  transport.append(playButton,range,timeLabel,clipLabel);
+  previewWrap.append(preview,transport);right.append(previewWrap);
+  const statusBox=element('div');right.append(statusBox);
+  const exportRow=element('div',undefined,'inline-actions');right.append(exportRow);
+  const exportBox=element('div',undefined,'tool-output');right.append(exportBox);
+  S.cameraExportBox=exportBox;
+
+  function showPreview(){
+    const time=S.cameraTime;
+    const url=endpoint('camera/frame')+`?time=${time}&rev=${project().revision}&_=${Date.now()}`;
+    preview.src=url;timeLabel.textContent=`${Math.round(time)} ms / ${info.camera.duration} ms`;
+    range.value=String(time);
+    const reportUrl=endpoint('camera/frame')+`?time=${time}&report=true`;
+    api(reportUrl).then(report=>{
+      clipLabel.textContent=report.clipped_count?`近裁切 ${report.clipped_count} 层`:'无裁切';
+      clipLabel.classList.toggle('warn',Boolean(report.clipped_count));
+      const table=element('div',undefined,'table-wrap'),t=element('table'),head=element('tr');
+      for(const title of ['图层','深度','距离','投影比例','画布偏移','状态'])head.append(element('th',title));
+      const thead=element('thead');thead.append(head);t.append(thead);
+      const tbody=element('tbody');
+      for(const pane of [...report.panes].sort((a,b)=>b.depth-a.depth)){
+        const tr=element('tr');const state=pane.clipped?'近裁切丢弃':pane.visible?`可见 · ${pane.projected_size.join('×')}`:({stale:'图层已移除',pane_disabled:'未参与摄影机',layer_hidden:'图层隐藏',near_clip:'近裁切丢弃'}[pane.reason]||'未投影');
+        tr.append(element('td',pane.name),element('td',fmt(pane.depth)),element('td',fmt(pane.distance)),element('td',fmt(pane.scale)),element('td',pane.visible?`${fmt(pane.offset_x)}, ${fmt(pane.offset_y)}`:'—'),element('td',state));
+        if(pane.clipped)tr.className='clipped';tbody.append(tr);
+      }
+      t.append(tbody);table.append(t);statusBox.replaceChildren(element('h3','当前时间的投影'),table,element('p',`姿势 x=${fmt(report.pose.x)} / y=${fmt(report.pose.y)} / 推进 z=${fmt(report.pose.z)} / 焦距 ${fmt(report.pose.focal)}；近裁切距离 ${fmt(report.near)}。${info.near_rule}`,'hint'));
+    }).catch(error=>status(error.message,true));
+  }
+  range.oninput=()=>{stopCameraPlay();playButton.textContent='▶ 播放';S.cameraTime=Number(range.value);showPreview()};
+  playButton.onclick=()=>{
+    if(cameraRAF){stopCameraPlay();playButton.textContent='▶ 播放';return}
+    playButton.textContent='Ⅱ 暂停';const start=performance.now(),from=S.cameraTime>=info.camera.duration?0:S.cameraTime;
+    function tick(now){const elapsed=from+(now-start);if(elapsed>=info.camera.duration){S.cameraTime=info.camera.duration;showPreview();stopCameraPlay();playButton.textContent='▶ 播放';return}S.cameraTime=elapsed;showPreview();cameraRAF=requestAnimationFrame(tick)}
+    cameraRAF=requestAnimationFrame(tick);
+  };
+  showPreview();
+
+  /* 左侧：镜头与关键点、图层深度 */
+  const rig=info.camera;
+  const settingsFields=[num('duration','镜头时长毫秒',rig.duration,50,30000),num('fps','采样帧率',rig.fps,1,50),num('near','近裁切距离',rig.near,.01,5000),select('sampling','投影采样方式',rig.sampling,[['nearest','最近邻（像素画）'],['bilinear','双线性']]),check('enabled','启用摄影机',rig.enabled)];
+  left.append(form(settingsFields,'保存镜头设置',async data=>{
+    const keys=rig.keys.filter(k=>k.time<=data.duration).map(k=>({...k}));
+    if(!keys.length)keys.push({...rig.keys[0],time:0});
+    if(keys.length===1)keys.push({...keys[0],time:data.duration});
+    const result=await mutate('保存摄影机设置…',endpoint('camera'),{...data,keys},'PATCH');
+    S.cameraTime=Math.min(S.cameraTime,result.camera.duration);await acceptProject(result);await openCamera();
+  }));
+  const sync=element('button','同步当前帧图层（清理已移除图层）');sync.onclick=guard(async()=>{const result=await mutate('同步摄影机图层…',endpoint('camera'),{sync:true},'PATCH');await acceptProject(result);await openCamera()});
+  left.append(element('p'),sync);
+
+  left.append(element('h3','图层深度'));
+  left.append(element('p','深度是图层到摄影机在 z=0 时的距离。数值越大越远；同一位置上，远处视差小、近处视差大。开启“平铺覆盖”可让背景越过原画边界继续填充。','muted'));
+  for(const row of info.layers){
+    const panel=element('div',undefined,'camera-pane');
+    const thumb=element('img');thumb.src=endpoint(`frames/${rig.source_frame}/layers/${row.layer_id}/image`)+`?rev=${project().revision}`;
+    const title=element('b',row.name);
+    const depthField=element('label','深度');const depthInput=element('input');depthInput.type='number';depthInput.step='any';depthInput.min='.01';depthInput.max='5000';depthInput.value=row.listed?String(row.depth):'';
+    depthField.append(depthInput);
+    const coverLabel=element('label',undefined,'check'),cover=element('input');cover.type='checkbox';cover.checked=Boolean(row.cover);coverLabel.append(cover,document.createTextNode('平铺覆盖'));
+    const activeLabel=element('label',undefined,'check'),active=element('input');active.type='checkbox';active.checked=row.listed?Boolean(row.pane_visible):false;activeLabel.append(active,document.createTextNode('参与摄影机'));
+    const save=element('button',row.listed?'保存深度':'加入摄影机');save.className='small';
+    save.onclick=guard(async()=>{if(depthInput.value==='')throw Error('请填写图层深度');const result=await mutate('保存图层深度…',endpoint('camera/panes'),{layer_id:row.layer_id,depth:Number(depthInput.value),cover:cover.checked,visible:active.checked});await acceptProject(result);await openCamera()});
+    panel.append(thumb,title,depthField,coverLabel,activeLabel,save);
+    if(!row.layer_visible)panel.append(element('small','图层在主工作台中已隐藏','muted'));
+    left.append(panel);
+  }
+
+  left.append(element('h3','摄影机位置与焦距关键点'));
+  left.append(element('p','每个关键点保存时间、横向/纵向位置、推进 z 与焦距。推进与横移可在同一时间区间同时发生；缓动取左侧关键点的设置。预览与导出使用同一投影。','hint'));
+  let keys=rig.keys.map(k=>({...k}));
+  const keyBox=element('div',undefined,'camera-keys');left.append(keyBox);
+  function renderKeys(){
+    keyBox.replaceChildren();
+    keys.forEach((key,index)=>{
+      const row=element('div',undefined,'camera-key');
+      const cells={};
+      for(const [name,labelText,step] of [['time','时间 ms',10],['x','横向 X',.5],['y','纵向 Y',.5],['z','推进 Z',.5],['focal','焦距',.5]]){
+        const label=element('label',labelText);const input=element('input');input.type='number';input.step=String(step);input.value=String(key[name]);input.oninput=()=>{key[name]=Number(input.value)};label.append(input);cells[name]=input;row.append(label);
+      }
+      const easingLabel=element('label','缓动');const easing=element('select');for(const [value,labelText] of S.catalog.easing){easing.append(new Option(labelText,value))}easing.value=key.easing||'smoothstep';easing.onchange=()=>key.easing=easing.value;easingLabel.append(easing);row.append(easingLabel);
+      const remove=element('button','×');remove.title='移除关键点';remove.onclick=()=>{keys.splice(index,1);renderKeys()};row.append(remove);
+      keyBox.append(row);
+    });
+    if(!keys.length)keyBox.append(element('p','至少保留一个关键点','form-error'));
+  }
+  renderKeys();
+  async function addKeyAt(time){
+    time=Math.max(0,Math.min(rig.duration,Math.round(time)));
+    let pose={x:0,y:0,z:0,focal:100,easing:'smoothstep'};
+    try{const report=await api(endpoint('camera/frame')+`?time=${time}&report=true`);pose={...report.pose,easing:'smoothstep'}}catch(error){}
+    const item={time,x:Number(pose.x.toFixed(3)),y:Number(pose.y.toFixed(3)),z:Number(pose.z.toFixed(3)),focal:Number(pose.focal.toFixed(3)),easing:'smoothstep'};
+    const existing=keys.findIndex(k=>Number(k.time)===time);
+    if(existing>=0){item.easing=keys[existing].easing;keys[existing]={...keys[existing],...item};status(`已用当前姿势更新 ${time}ms 的关键点`)}
+    else{keys.push(item);status(`已插入 ${time}ms 的关键点`)}
+    keys.sort((a,b)=>a.time-b.time);renderKeys();
+  }
+  const keyActions=element('div',undefined,'inline-actions');
+  const addNow=element('button','在当前时间插入关键点');addNow.onclick=guard(()=>addKeyAt(S.cameraTime));
+  const addEnd=element('button','末尾追加关键点');addEnd.onclick=guard(async()=>{await addKeyAt(info.camera.duration)});
+  const saveKeys=element('button','保存全部关键点');saveKeys.className='primary';saveKeys.onclick=guard(async()=>{const payload=keys.map(k=>({time:Math.max(0,Math.min(rig.duration,Math.round(Number(k.time)))),x:Number(k.x),y:Number(k.y),z:Number(k.z),focal:Number(k.focal),easing:k.easing}));const result=await mutate('保存摄影机关键点…',endpoint('camera'),{keys:payload},'PATCH');await acceptProject(result);await openCamera()});
+  keyActions.append(addNow,addEnd,saveKeys);left.append(keyActions);
+
+  const exportAPNG=element('button','生成透明 APNG');exportAPNG.className='primary';
+  exportAPNG.onclick=guard(()=>exportCamera('apng'));
+  const exportWebP=element('button','生成透明 WebP');
+  exportWebP.onclick=guard(()=>exportCamera('webp'));
+  const removeCamera=element('button','移除摄影机（保留图层）');
+  removeCamera.onclick=guard(async()=>{const result=await mutate('移除多平面摄影机…',endpoint('camera'),{},'DELETE');await acceptProject(result);$('dialog').close()});
+  exportRow.append(exportAPNG,exportWebP,removeCamera);
+  right.append(element('p','预览与导出都由同一份投影计算生成，导出内容为透明背景动画。图层原始像素与位置不被摄影机修改。','hint'));
+}
+
+async function exportCamera(container){
+  stopCameraPlay();
+  const box=S.cameraExportBox&&S.cameraExportBox.isConnected?S.cameraExportBox:dialog('摄影机透明动画');
+  box.replaceChildren(element('p','正在生成透明动画…','muted'));
+  const blob=await work('生成摄影机透明动画…',()=>api(endpoint('camera/export'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({container,revision:project().revision})}));
+  box.replaceChildren();
+  box.append(element('h3',`${container.toUpperCase()} 透明摄影机动画`));
+  showBlob(blob,box,container==='webp'?'camera.webp':'camera.png');
+  box.append(element('p','导出由工作区同一份图层深度与关键点投影生成，背景透明；主工作台画布仍是原始图层画面。','muted'));
+  status('摄影机动画已生成');
+}
+document.addEventListener('keydown',event=>{if(event.key==='Escape')stopCameraPlay()});
+$('dialog').addEventListener('close',stopCameraPlay);

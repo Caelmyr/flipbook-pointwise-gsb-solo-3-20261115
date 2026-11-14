@@ -1,0 +1,40 @@
+{
+  "feature": "multiplane camera",
+  "verified_at": "2026-11-14",
+  "environment": {
+    "docker_cli_available": false,
+    "note": "本次会话环境没有 docker 命令，未重新构建容器镜像；以真实 Waitress 进程 + 独立数据目录完成重启验证。",
+    "python": "3.11 (local), requirements pinned for Python 3.12 container"
+  },
+  "in_process_restart": {
+    "demo": "纵深街道 · 多平面摄影机 96×64 19帧 1600ms",
+    "export_format": "camera-apng",
+    "frames": 19,
+    "duration_ms": 1600,
+    "export_sha256_prefix": "9c3165b60d80ce7f",
+    "export_download_identical_after_restart": true,
+    "camera_settings_retained": true,
+    "job_status_retained": "completed",
+    "preview_frame_identical_after_restart": true,
+    "fresh_rerender_identical_to_before": true
+  },
+  "ui_browser_checks": {
+    "browser": "headless Chromium via Playwright",
+    "dialog_opened": "多平面摄影机工作区",
+    "slider_scrub": "0 -> 1200 ms updates preview and projection table",
+    "depth_edit_saved": "天空层 320 -> 400, revision increased",
+    "key_point_insert_and_save": "inserted at 700ms, saved without duplicate-time error",
+    "playback": "transport toggles 播放/暂停 and advances time",
+    "export_button": "生成透明 APNG produced inline preview and download link",
+    "export_dialog_formats": [
+      "camera-apng",
+      "camera-webp"
+    ],
+    "console_errors": []
+  },
+  "limits": [
+    "平盘视差模型，不含透视倾斜、遮挡体、运动模糊或真正的三维网格",
+    "近裁切丢弃整层并报告，不做逐像素软边",
+    "平铺覆盖使用镜像重复，极端近景/远景仍可能露出重复规律"
+  ]
+}
