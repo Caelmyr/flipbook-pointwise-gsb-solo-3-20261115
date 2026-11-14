@@ -6,6 +6,7 @@ import unittest
 import zipfile
 from pathlib import Path
 import numpy as np
+import regex
 from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -18,6 +19,8 @@ from flipbook.atlas import build_atlas
 from flipbook.atlas_import import unpack_sprite, validate_atlas
 from flipbook.ninepatch import nine_slice, seam_blend
 from flipbook.exporting import animated_gif, animated_png, project_bundle
+from flipbook.caption_layout import Typeface
+from flipbook.caption_font import FONTS
 
 
 class Workflows(unittest.TestCase):
@@ -369,6 +372,148 @@ class Workflows(unittest.TestCase):
             self.assertEqual(actual['frames'][0]['layers'][0]['asset'], project['frames'][0]['layers'][0]['asset'])
         finally:
             another.extensions['jobs'].executor.shutdown(wait=True)
+
+
+@unittest.skipUnless(Path(FONTS['sans']).is_file(), 'DejaVu 排版字体不可用')
+class TypewriterCaptions(unittest.TestCase):
+    """整句排版 + 文字簇显露：连写不形变、组合标记不拆散、双向顺序正确、背景保留。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.app = create_app(cls.temp.name)
+        cls.app.testing = True
+        cls.client = cls.app.test_client()
+        cls.store = cls.app.extensions['store']
+        cls.typeface = Typeface(FONTS['sans'], 18)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.extensions['jobs'].executor.shutdown(wait=True)
+        cls.temp.cleanup()
+
+    def call(self, method, path, data=None, expected=200):
+        response = self.client.open(path, method=method, json=data)
+        self.assertEqual(response.status_code, expected, response.json if response.is_json else response.data[:200])
+        return response.json
+
+    def base(self, project):
+        return '/api/projects/' + project['id']
+
+    def make_project(self, width=200, height=160):
+        return self.call('POST', '/api/projects', {'name': '字幕', 'width': width, 'height': height}, 201)
+
+    def caption_layers(self, project, text, **extra):
+        frame = project['frames'][0]
+        payload = {'revision': project['revision'], 'frame_id': frame['id'], 'typeface': 'sans',
+                   'font_size': 18, 'text': text, 'x': 2, 'y': 2, 'wrap_width': 120}
+        payload.update(extra)
+        result = self.call('POST', self.base(project) + '/typewriter', payload)
+        clusters = len(list(regex.finditer(r'\X', text)))
+        frames = result['frames']
+        self.assertEqual(len(frames), 1 + clusters)
+        generated = frames[-clusters:]
+        layers = [np.asarray(self.store.image(project['id'], f['layers'][-1]['asset'])) for f in generated]
+        return result, generated, layers, clusters
+
+    def assert_reveal_stable(self, layers):
+        """每一帧已显露像素必须是最终帧的严格子集：位置与形态逐像素不变。"""
+        full = layers[-1]
+        for earlier in layers[:-1]:
+            drift = (earlier[..., 3] > 0) & (np.any(earlier != full, axis=2))
+            self.assertFalse(drift.any(), '已显露字幕在后续帧发生位移或形变')
+
+    def test_arabic_joining_keeps_final_glyph_shapes(self):
+        # 整句塑形产出连写字形；显露帧逐帧稳定，且首簇出现在视觉最右侧（RTL 顺序）
+        word = 'محبة'
+        full_records, _ = self.typeface.layout(word, 200)
+        full_glyphs = {logical: gid for gid, logical, _, _ in full_records}
+        frames, spans = self.typeface.reveal_frames(word, 200, 200, 60, (255, 255, 255, 255))
+        self.assertEqual(len(spans), len(word))
+        self.assert_reveal_stable(frames)
+        ink = [int((f[..., 3] > 0).sum()) for f in frames]
+        self.assertTrue(all(ink[i] <= ink[i + 1] for i in range(len(ink) - 1)))
+        first_x = np.argwhere(frames[1][..., 3] > 0)[:, 1]
+        full_x = np.argwhere(frames[-1][..., 3] > 0)[:, 1]
+        self.assertGreaterEqual(first_x.min(), full_x.max() - 30)
+        self.assertTrue(full_glyphs)
+
+    def test_combining_marks_stay_with_base_cluster(self):
+        # 基字符 + 组合音标是同一个 UAX #29 文字簇，帧数按簇而非码点计
+        for text in ('بَ', 'بَّ', 'á'):
+            spans = list(regex.finditer(r'\X', text))
+            self.assertEqual(len(spans), 1, f'{text!r} 应只有一个文字簇')
+            frames, _ = self.typeface.reveal_frames(text, 200, 200, 60, (255, 255, 255, 255))
+            # 空帧 + 一帧完整簇；组合标记绝不会单独出现
+            self.assertEqual(len(frames), 2)
+            self.assertEqual(int((frames[0][..., 3] > 0).sum()), 0)
+            self.assertGreater(int((frames[1][..., 3] > 0).sum()), 0)
+            self.assert_reveal_stable(frames)
+
+    def test_pipeline_frame_count_uses_clusters_and_preserves_background(self):
+        project = self.make_project()
+        frame = project['frames'][0]
+        # 源帧画一个红色背景标记
+        project = self.call('POST', f"{self.base(project)}/frames/{frame['id']}/layers/{frame['layers'][0]['id']}/draw",
+                            {'revision': project['revision'], 'tool': 'rectangle', 'color': '#ff0000ff',
+                             'points': [[3, 3], [9, 9]], 'filled': True})
+        text = 'abَc'  # 4 个码点，بَ 合为一个簇 -> 3 个文字簇、3 个新帧
+        result, generated, layers, clusters = self.caption_layers(project, text)
+        self.assertEqual(clusters, 3)
+        self.assert_reveal_stable(layers)
+        # 背景图层在所有字幕帧里保持同一素材引用；每帧 = 源帧图层 + 一个独立字幕层
+        source_asset = result['frames'][0]['layers'][0]['asset']
+        for f in generated:
+            self.assertEqual(f['layers'][0]['asset'], source_asset)
+            self.assertEqual(len(f['layers']), len(result['frames'][0]['layers']) + 1)
+        composed = np.asarray(render_frame(self.store, result, generated[-1]['id']))
+        self.assertEqual(tuple(composed[6, 6]), (255, 0, 0, 255))
+
+    def test_mixed_bidi_and_latin_layout_are_stable(self):
+        for text in ('office 123', 'a12 (بَت) xy', 'a (ب) c'):
+            project = self.make_project()
+            _, _, layers, _ = self.caption_layers(project, text)
+            self.assert_reveal_stable(layers)
+            ink = [int((a[..., 3] > 0).sum()) for a in layers]
+            self.assertTrue(all(ink[i] <= ink[i + 1] for i in range(len(ink) - 1)))
+
+    def test_wrapping_is_fixed_before_reveal_and_never_reflows(self):
+        project = self.make_project(width=200, height=200)
+        text = 'the quick brown fox jumps over the lazy dog'
+        result, generated, layers, clusters = self.caption_layers(project, text, wrap_width=90)
+        self.assert_reveal_stable(layers)
+        # 整句确实被拆成多行，且每行基线在显露开始前就固定
+        records, line_count = self.typeface.layout(text, 90)
+        self.assertGreater(line_count, 1)
+        baseline_rows = sorted({y for _, _, _, y in records})
+        self.assertGreater(len(baseline_rows), 1)
+
+    def test_reveal_uses_glyph_ownership_not_width_truncation(self):
+        # 长单词超过换行框也必须按字形归属显露，而不是按整句宽度硬切；
+        # 每帧都是最终帧的像素子集，最后一帧包含整句全部墨迹
+        project = self.make_project(width=120, height=80)
+        text = 'supercalifragilistic'
+        _, _, layers, clusters = self.caption_layers(project, text, wrap_width=80)
+        self.assertEqual(clusters, len(text))
+        self.assert_reveal_stable(layers)
+        final_ink = int((layers[-1][..., 3] > 0).sum())
+        first_ink = int((layers[0][..., 3] > 0).sum())
+        self.assertGreater(final_ink, first_ink)
+        self.assertGreater(final_ink, 0)
+
+    def test_missing_glyph_is_rejected_before_any_frame_is_created(self):
+        project = self.make_project()
+        frame = project['frames'][0]
+        revision = project['revision']
+        # 先确认该字符在 DejaVu 中确实缺字形，避免依赖具体字体覆盖表
+        missing = ''.join(ch for ch in '汉字😀𝄞' if not self.typeface.ft_face.get_char_index(ord(ch)))
+        self.assertTrue(missing, '测试前提：DejaVu 至少缺一个候选字符')
+        response = self.client.post(self.base(project) + '/typewriter',
+                                    json={'revision': revision, 'frame_id': frame['id'], 'typeface': 'sans',
+                                          'font_size': 18, 'text': 'hello' + missing[0]})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.store.get(project['id'])['revision'], revision)
+        self.assertEqual(len(self.store.get(project['id'])['frames']), 1)
 
 
 if __name__ == '__main__':

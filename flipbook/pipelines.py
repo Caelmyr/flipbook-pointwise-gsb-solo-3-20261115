@@ -1,6 +1,7 @@
 from copy import deepcopy
 import math
 import numpy as np
+import regex
 from PIL import Image, ImageDraw
 from . import validate as v
 from .model import find_frame, new_frame, new_layer, clone_frame
@@ -66,23 +67,37 @@ def typewriter(store, project_id, revision, body):
     y = v.integer(body.get('y', 4), '文字Y', -100, 2048)
     from .caption_font import caption_font
     font_path, typeface = caption_font(body, message, size)
-    count = len(message)
     with store.edit(project_id, revision, '打字机文字动画') as project:
         frame = find_frame(project, body.get('frame_id'))
+        width, height = project['width'], project['height']
+        # 换行宽度：0 表示从文字锚点到画布右缘，可显式收窄；先确定整句换行再显露
+        default_wrap = max(1, width - max(0, x))
+        wrap_width = v.integer(body.get('wrap_width', 0), '换行宽度', 0, max(1, width))
+        if wrap_width == 0:
+            wrap_width = default_wrap
+        # 文字簇数量决定帧数：组合标记、ZWJ 序列等不会被拆成单独一步
+        count = sum(1 for _ in regex.finditer(r'\X', message))
         if len(project['frames']) + count > 300:
             raise v.Invalid('字幕展开超过300帧')
         if len(frame['layers']) >= 16:
             raise v.Invalid('字幕图层超过16层')
-        v.pixel_budget(project['width'], project['height'],
+        v.pixel_budget(width, height,
                        sum(len(f['layers']) for f in project['frames']) + count * (len(frame['layers']) + 1))
+        # 整句只排版一次：换行、双向顺序、连写与组合标记的字形全部固定，
+        # 后续帧仅按阅读进度清零未显露字形的像素区域，已显露像素不再变化。
+        rgba_frames, spans = typeface.reveal_frames(message, wrap_width, width, height, color)
+        if len(rgba_frames) - 1 != count or len(spans) != count:
+            raise v.Invalid('字幕文字簇计算失败')
         additions = []
+        # 第 0 帧是全空蒙版，跳过；每个文字簇对应一帧
         for index in range(1, count + 1):
-            image = Image.new('RGBA', (project['width'], project['height']))
-            ImageDraw.Draw(image).text((x, y), message[:index], font=typeface, fill=color)
+            layer_image = Image.new('RGBA', (width, height))
+            layer_image.alpha_composite(Image.fromarray(rgba_frames[index], 'RGBA'), (x, y))
             copied = clone_frame(frame)
             copied['name'] = f'字幕 {index}/{count}'
             copied['duration'] = duration
-            copied['layers'].append(new_layer('打字字幕', store.put_image(project_id, image)))
+            # 背景来自源帧的完整克隆，字幕只作为独立新图层叠加，不改写原图层
+            copied['layers'].append(new_layer('打字字幕', store.put_image(project_id, layer_image)))
             additions.append(copied)
         insertion = project['frames'].index(frame) + 1
         project['frames'][insertion:insertion] = additions
