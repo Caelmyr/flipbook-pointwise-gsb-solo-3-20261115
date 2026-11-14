@@ -266,6 +266,242 @@ class Workflows(unittest.TestCase):
             self.assertEqual(len(metadata['layers'][0]['data']), 12)
             self.assertIn('tiles/1.png', archive.namelist())
 
+    def rule_project(self):
+        project = self.demo('tiles')
+        project = self.mutate(project, 'maps', {'columns': 5, 'rows': 4, 'tile_width': 16, 'tile_height': 16})
+        map_id = project['tilemaps'][0]['id']
+        rules = {'name': '地形接口', 'tiles': {
+            '1': {'north': 'G', 'east': 'S', 'south': 'D', 'west': 'W'},
+            '2': {'north': 'D', 'east': 'W', 'south': 'G', 'west': 'S'},
+            '3': {'north': 'G', 'east': 'W', 'south': 'G', 'west': 'W'},
+        }}
+        project = self.mutate(project, f'maps/{map_id}/edge-rules', {'rules': rules})
+        return project, map_id
+
+    def rule_preview(self, project, map_id, data, expected=200):
+        payload = {'revision': project['revision'], 'region': {'x': 0, 'y': 0, 'width': 3, 'height': 3}}
+        payload.update(data)
+        return self.call('POST', self.base(project) + f'/maps/{map_id}/edge-rules/preview', payload, expected)
+
+    def test_rule_solve_reproducible_commit_and_single_undo(self):
+        project, map_id = self.rule_project()
+        before = json.dumps(project['tilemaps'][0]['layers'][0]['data'])
+        first = self.rule_preview(project, map_id, {'seed': 7})
+        second = self.rule_preview(project, map_id, {'seed': 7})
+        other = self.rule_preview(project, map_id, {'seed': 99})
+        self.assertEqual(first['status'], 'solved')
+        self.assertEqual(first['stats']['assigned'], 9)
+        self.assertEqual(first['stats']['undetermined'], 0)
+        self.assertEqual(first['fingerprint'], second['fingerprint'])
+        self.assertNotEqual(first['fingerprint'], other['fingerprint'])
+        self.assertEqual(first['cells'], second['cells'])
+        self.assertEqual(first['connections'], second['connections'])
+        self.assertEqual(len(first['connections']), 12)
+        self.assertEqual(self.store.get(project['id'])['revision'], project['revision'])
+        committed = self.mutate(project, f'maps/{map_id}/edge-rules/commit', {
+            'region': first['region'], 'seed': 7, 'mode': 'solve', 'pins': [], 'fingerprint': first['fingerprint'],
+        })
+        layer = committed['tilemaps'][0]['layers'][0]
+        expected = [0] * 20
+        for cell in first['cells']:
+            expected[cell['y'] * 5 + cell['x']] = cell['value']
+        self.assertEqual(layer['data'], expected)
+        undone = self.mutate(committed, 'undo')
+        self.assertEqual(json.dumps(undone['tilemaps'][0]['layers'][0]['data']), before)
+
+    def test_rule_conflict_names_pins_and_rules_and_refuses_commit(self):
+        project, map_id = self.rule_project()
+        before = json.dumps(project['tilemaps'][0]['layers'][0]['data'])
+        conflict = self.rule_preview(project, map_id, {'pins': [{'x': 0, 'y': 0, 'tile': 1}, {'x': 0, 'y': 1, 'tile': 3}]})
+        self.assertEqual(conflict['status'], 'conflict')
+        self.assertIsNone(conflict['fingerprint'])
+        self.assertEqual([(pin['x'], pin['y'], pin['tile']) for pin in conflict['conflicting_pins']], [(0, 0, 1), (0, 1, 3)])
+        self.assertEqual([rule['tile'] for rule in conflict['conflicting_rules']], [1, 3])
+        self.assertIn('瓦片1', conflict['message'])
+        self.assertIn('瓦片3', conflict['message'])
+        response = self.client.post(self.base(project) + f'/maps/{map_id}/edge-rules/commit', json={
+            'revision': project['revision'], 'region': {'x': 0, 'y': 0, 'width': 3, 'height': 3},
+            'pins': [{'x': 0, 'y': 0, 'tile': 1}, {'x': 0, 'y': 1, 'tile': 3}],
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('未修改地图', response.json['error'])
+        actual = self.store.get(project['id'])
+        self.assertEqual(actual['revision'], project['revision'])
+        self.assertEqual(json.dumps(actual['tilemaps'][0]['layers'][0]['data']), before)
+        solved = self.rule_preview(project, map_id, {'pins': [{'x': 0, 'y': 0, 'tile': 1}]})
+        self.assertEqual(solved['status'], 'solved')
+        self.assertEqual(solved['stats']['pinned'], 1)
+
+    def test_rule_manual_key_tiles_can_be_relaxed_then_solved(self):
+        project, map_id = self.rule_project()
+        pins = [{'x': 0, 'y': 0, 'tile': 1}, {'x': 0, 'y': 1, 'tile': 3}]
+        conflict = self.rule_preview(project, map_id, {'pins': pins})
+        self.assertEqual(conflict['status'], 'conflict')
+        relaxed = self.rule_preview(project, map_id, {'pins': pins[1:]})
+        self.assertEqual(relaxed['status'], 'solved')
+        self.assertEqual(relaxed['stats']['pinned'], 1)
+        local = self.rule_preview(project, map_id, {
+            'pins': pins, 'region': {'x': 0, 'y': 0, 'width': 3, 'height': 2},
+        })
+        self.assertEqual(local['status'], 'conflict')
+        self.assertEqual([(pin['x'], pin['y']) for pin in local['conflicting_pins']], [(0, 0), (0, 1)])
+        pinned_existing = self.mutate(project, f'maps/{map_id}/paint', {'tile': 2, 'cells': [[1, 1]]})
+        kept = self.rule_preview(pinned_existing, map_id, {'pin_existing': True, 'region': {'x': 0, 'y': 0, 'width': 3, 'height': 3}})
+        self.assertEqual(kept['status'], 'solved')
+        self.assertEqual(kept['stats']['pinned'], 1)
+        cell = next(item for item in kept['cells'] if (item['x'], item['y']) == (1, 1))
+        self.assertEqual((cell['tile'], cell['status']), (2, 'pinned'))
+        overridden = self.rule_preview(pinned_existing, map_id, {'pin_existing': False, 'region': {'x': 0, 'y': 0, 'width': 3, 'height': 3}, 'pins': [{'x': 1, 'y': 1, 'tile': 3}]})
+        self.assertEqual(overridden['status'], 'solved')
+        self.assertEqual(next(item for item in overridden['cells'] if (item['x'], item['y']) == (1, 1))['tile'], 3)
+
+    def test_rule_border_tiles_actually_constrain_domain(self):
+        project, map_id = self.rule_project()
+        rules = {'name': '接缝', 'tiles': {
+            '1': {'north': 'G', 'east': 'S', 'south': 'D', 'west': 'W'},
+            '2': {'north': 'D', 'east': 'W', 'south': 'G', 'west': 'S'},
+            '3': {'north': 'G', 'east': 'W', 'south': 'G', 'west': 'W'},
+        }}
+        project = self.mutate(project, f'maps/{map_id}/edge-rules', {'rules': rules})
+        project = self.mutate(project, f'maps/{map_id}/paint', {'tile': 1, 'cells': [[0, 1]]})
+        border_only = self.rule_preview(project, map_id, {'region': {'x': 1, 'y': 1, 'width': 1, 'height': 1}, 'mode': 'propagate'})
+        self.assertEqual(border_only['stats']['undetermined'], 0)
+        self.assertEqual(border_only['cells'][0]['tile'], 2)
+        self.assertGreaterEqual(border_only['connection_count'], 1)
+        self.assertTrue(any(item['to_border'] for item in border_only['connections']))
+        conflicting_border = self.mutate(project, f'maps/{map_id}/paint', {'tile': 2, 'cells': [[2, 1]]})
+        result = self.rule_preview(conflicting_border, map_id, {'region': {'x': 1, 'y': 1, 'width': 1, 'height': 1}})
+        self.assertEqual(result['status'], 'conflict')
+        self.assertEqual(result['conflicting_fixed'][0]['source'], '区域外边界')
+        self.assertEqual((result['conflicting_fixed'][0]['x'], result['conflicting_fixed'][0]['y']), (0, 1))
+
+    def test_rule_saved_pins_reload_and_survive_undo(self):
+        project, map_id = self.rule_project()
+        pins = [{'x': 0, 'y': 0, 'tile': 1, 'flip_x': True}]
+        preview = self.rule_preview(project, map_id, {'pins': pins})
+        committed = self.mutate(project, f'maps/{map_id}/edge-rules/commit', {
+            'region': preview['region'], 'seed': 7, 'mode': 'solve', 'pins': pins,
+            'fingerprint': preview['fingerprint'],
+        })
+        stored = committed['tilemaps'][0]['rule_pins']
+        self.assertEqual(stored, [{'x': 0, 'y': 0, 'tile': 1, 'flip_x': True, 'flip_y': False}])
+        summary = self.call('GET', self.base(project) + f'/maps/{map_id}/edge-rules')
+        self.assertEqual(summary['saved_pins'], stored)
+        follow_up = self.rule_preview(committed, map_id, {'region': {'x': 0, 'y': 0, 'width': 2, 'height': 2}})
+        self.assertEqual(follow_up['status'], 'solved')
+        self.assertEqual(follow_up['stats']['pinned'], 1)
+        undone = self.mutate(committed, 'undo')
+        self.assertNotIn('rule_pins', undone['tilemaps'][0])
+        self.assertEqual(undone['tilemaps'][0]['edge_rules'], project['tilemaps'][0]['edge_rules'])
+
+    def test_rule_flips_swap_edges_when_solving(self):
+        project, map_id = self.rule_project()
+        plain = self.rule_preview(project, map_id, {'region': {'x': 0, 'y': 0, 'width': 2, 'height': 2}})
+        flipped = self.rule_preview(project, map_id, {
+            'region': {'x': 0, 'y': 0, 'width': 2, 'height': 2},
+            'pins': [{'x': 0, 'y': 0, 'tile': 1, 'flip_x': True}],
+        })
+        east_flip = next(item for item in flipped['connections'] if item['first'] == [0, 0] and item['direction'] == 'east')
+        plain_east = next(item for item in plain['connections'] if item['first'] == [0, 0] and item['direction'] == 'east')
+        self.assertEqual(flipped['stats']['pinned'], 1)
+        self.assertEqual(east_flip['tokens'][0], 'W')
+        self.assertEqual(plain_east['tokens'], [plain_east['tokens'][0], plain_east['tokens'][0]])
+
+    def test_rule_conflict_isolates_one_bad_pin(self):
+        project, map_id = self.rule_project()
+        pins = [{'x': 0, 'y': 0, 'tile': 1}, {'x': 0, 'y': 1, 'tile': 3}, {'x': 2, 'y': 2, 'tile': 3}]
+        solved = self.rule_preview(project, map_id, {'region': {'x': 0, 'y': 0, 'width': 3, 'height': 3}, 'pins': pins})
+        self.assertEqual(solved['status'], 'conflict')
+        core = [(pin['x'], pin['y']) for pin in solved['conflicting_pins']]
+        self.assertLessEqual(len(core), 2)
+        self.assertNotIn((2, 2), core)
+
+    def test_rule_propagate_reports_undetermined_cells(self):
+        project, map_id = self.rule_project()
+        result = self.rule_preview(project, map_id, {'mode': 'propagate', 'region': {'x': 0, 'y': 0, 'width': 4, 'height': 4}})
+        self.assertEqual(result['status'], 'solved')
+        self.assertEqual(result['stats']['assigned'], 0)
+        self.assertEqual(result['stats']['undetermined'], 16)
+        self.assertEqual(len(result['undetermined']), 16)
+        self.assertGreater(result['undetermined'][0]['candidate_count'], 1)
+        self.assertEqual(result['connections'], [])
+        pinned = self.rule_preview(project, map_id, {'mode': 'propagate', 'pins': [{'x': 1, 'y': 1, 'tile': 2}], 'region': {'x': 0, 'y': 0, 'width': 4, 'height': 4}})
+        self.assertEqual(pinned['stats']['pinned'], 1)
+        self.assertLess(pinned['stats']['undetermined'], 16)
+        response = self.client.post(self.base(project) + f'/maps/{map_id}/edge-rules/commit', json={
+            'revision': project['revision'], 'region': {'x': 0, 'y': 0, 'width': 4, 'height': 4}, 'mode': 'propagate',
+        })
+        self.assertEqual(response.status_code, 400)
+
+    def test_rule_commit_rejects_stale_fingerprint(self):
+        project, map_id = self.rule_project()
+        preview = self.rule_preview(project, map_id, {})
+        stale = self.mutate(project, f'maps/{map_id}/paint', {'tile': 3, 'cells': [[4, 3]]})
+        response = self.client.post(self.base(stale) + f'/maps/{map_id}/edge-rules/commit', json={
+            'revision': stale['revision'], 'region': preview['region'], 'seed': 7, 'mode': 'solve',
+            'fingerprint': preview['fingerprint'],
+        })
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.store.get(project['id'])['revision'], stale['revision'])
+
+    def test_rule_border_and_outside_cells_stay_unchanged(self):
+        project, map_id = self.rule_project()
+        project = self.mutate(project, f'maps/{map_id}/paint', {'tile': 2, 'cells': [[0, 1]]})
+        before = project['tilemaps'][0]['layers'][0]['data'][:]
+        preview = self.rule_preview(project, map_id, {'region': {'x': 1, 'y': 0, 'width': 2, 'height': 3}})
+        self.assertEqual(preview['status'], 'solved')
+        self.assertTrue(preview['fixed_border'])
+        self.assertEqual((preview['fixed_border'][0]['x'], preview['fixed_border'][0]['y']), (0, 1))
+        committed = self.mutate(project, f'maps/{map_id}/edge-rules/commit', {
+            'layer_id': preview['layer_id'], 'region': preview['region'], 'seed': 7, 'mode': 'solve',
+            'pins': [], 'fingerprint': preview['fingerprint'],
+        })
+        data = committed['tilemaps'][0]['layers'][0]['data']
+        for index, value in enumerate(data):
+            x, y = index % 5, index // 5
+            if not (1 <= x <= 2):
+                self.assertEqual(value, before[index], (x, y))
+
+    def test_rule_rules_validation_and_clear(self):
+        project, map_id = self.rule_project()
+        summary = self.call('GET', self.base(project) + f'/maps/{map_id}/edge-rules')
+        self.assertTrue(summary['configured'])
+        self.assertEqual(summary['rules']['name'], '地形接口')
+        for bad in [
+            {'rules': {'name': '空', 'tiles': {}}},
+            {'rules': {'name': '未知边', 'tiles': {'1': {'up': 'G'}}}},
+            {'rules': {'name': '越界', 'tiles': {'99': {'north': 'G'}}}},
+            {'rules': {'name': '全通配', 'tiles': {'1': {'north': '*', 'east': '*', 'south': '*', 'west': '*'}}}},
+            {'rules': {'name': '布尔', 'tiles': {'true': {'north': 'G'}}}},
+        ]:
+            response = self.client.post(self.base(project) + f'/maps/{map_id}/edge-rules', json={'revision': project['revision'], **bad})
+            self.assertEqual(response.status_code, 400, bad)
+        self.assertEqual(self.store.get(project['id'])['revision'], project['revision'])
+        cleared = self.mutate(project, f'maps/{map_id}/edge-rules', {'rules': None})
+        self.assertNotIn('edge_rules', cleared['tilemaps'][0])
+        response = self.client.post(self.base(cleared) + f'/maps/{map_id}/edge-rules/preview', json={'revision': cleared['revision']})
+        self.assertEqual(response.status_code, 400)
+
+    def test_rule_pins_flip_and_invalid_input(self):
+        project, map_id = self.rule_project()
+        flipped = self.rule_preview(project, map_id, {'pins': [[0, 0, 1, True, False]], 'region': {'x': 0, 'y': 0, 'width': 2, 'height': 2}})
+        self.assertEqual(flipped['status'], 'solved')
+        cell = next(item for item in flipped['cells'] if (item['x'], item['y']) == (0, 0))
+        self.assertEqual(cell['status'], 'pinned')
+        self.assertEqual(cell['value'], 0x80000001)
+        for bad in [
+            {'pins': [[0, 0, 1], [0, 0, 2]]},
+            {'pins': [[9, 9, 1]]},
+            {'pins': [[0.5, 0, 1]]},
+            {'region': {'x': 0, 'y': 0, 'width': 70, 'height': 70}},
+            {'seed': -1},
+            {'mode': 'unknown'},
+        ]:
+            payload = {'revision': project['revision'], 'region': {'x': 0, 'y': 0, 'width': 2, 'height': 2}}
+            payload.update(bad)
+            response = self.client.post(self.base(project) + f'/maps/{map_id}/edge-rules/preview', json=payload)
+            self.assertEqual(response.status_code, 400, bad)
+
     def test_tilemap_reference_blocks_frame_deletion(self):
         project = self.demo('tiles')
         project = self.mutate(project, 'maps', {})

@@ -193,6 +193,266 @@ async function openSnapshots(){
   const snapshots=await api(endpoint('snapshots'));const selected=[];for(const snapshot of snapshots){const card=element('div',undefined,'version-card');card.append(element('h3',snapshot.name),element('p',`${snapshot.frames} 帧 · ${snapshot.width}×${snapshot.height} · 修订${snapshot.source_revision} · ${snapshot.created_at}`,'muted'));const c=element('input');c.type='checkbox';c.onchange=()=>{c.checked?selected.push(snapshot.id):selected.splice(selected.indexOf(snapshot.id),1)};const l=element('label',' 对比');l.prepend(c);card.append(l);const restore=element('button','恢复（可撤销）');restore.onclick=guard(async()=>{await mutate('恢复关键版本…',endpoint(`snapshots/${snapshot.id}/restore`));$('dialog').close()});const fork=element('button','另建分支项目');fork.onclick=guard(async()=>{const p=await post(endpoint(`snapshots/${snapshot.id}/fork`));S.frame=S.layer=null;await acceptProject(p);$('dialog').close()});card.append(element('p'),restore,fork);body.append(card)}const compare=element('button','对比勾选的两个版本');compare.onclick=guard(async()=>{if(selected.length!==2)throw Error('请勾选两个关键版本');showData('关键版本差异',await post(endpoint('snapshots/compare'),{first:selected[0],second:selected[1]}))});body.append(compare);const history=await api(endpoint('history'));const details=element('details');details.append(element('summary','近期操作历史'));renderData(history,details);body.append(details);
 }
 $('maps').onclick=guard(openMaps);
+
+$('ruleWorkspace').onclick=guard(()=>openRuleWorkspace());
+const RULE_PRESETS={
+  '草原道路':{'name':'草原道路','tiles':{
+    '1':{'north':'草地','east':'道路','south':'道路','west':'草地'},
+    '2':{'north':'道路','east':'草地','south':'草地','west':'道路'},
+    '3':{'north':'草地','east':'草地','south':'草地','west':'草地'}}},
+  '河岸与草地':{'name':'河岸与草地','tiles':{
+    '1':{'north':'草地','east':'草地','south':'河水','west':'草地'},
+    '2':{'north':'河水','east':'草地','south':'草地','west':'草地'},
+    '3':{'north':'草地','east':'河水','south':'草地','west':'草地'}}},
+  '三通路面':{'name':'三通路面','tiles':{
+    '1':{'north':'道路','east':'道路','south':'道路','west':'道路'},
+    '2':{'north':'草地','east':'道路','south':'道路','west':'道路'},
+    '3':{'north':'草地','east':'草地','south':'道路','west':'道路'},
+    '4':{'north':'草地','east':'草地','south':'草地','west':'草地'}}}
+};
+const DIRECTION_NAMES={north:'上',east:'右',south:'下',west:'左'};
+function ruleRuleSummary(rule){if(!rule)return '通配';return ['上','右','下','左'].map((d,i)=>d+'='+rule[['north','east','south','west'][i]]).join(' ')}
+
+async function openRuleWorkspace(mapId=null){
+  const p=project();
+  if(!p.tilemaps.length){const body=dialog('规则铺设工作区');body.append(element('p','规则铺设需要先在“瓦片地图”中创建地图，并准备作为瓦片的帧。','hint'));const open=element('button','前往瓦片地图',undefined);open.className='primary';open.onclick=()=>{ $('dialog').close();openMaps(); };body.append(open);return}
+  let map=p.tilemaps.find(m=>m.id===mapId)||p.tilemaps[0];
+  const body=dialog('规则铺设工作区');
+  const chooser=element('select');for(const item of p.tilemaps)chooser.append(new Option(item.name,item.id));chooser.value=map.id;chooser.onchange=()=>openRuleWorkspace(chooser.value);
+  const intro=element('p','在“瓦片地图”里先准备瓦片和已有格子；这里按边缘连接规则在所选区域求解。求解只是预览，点“确认铺设”才会写入地图，可一次撤销。','hint');
+  const layout=element('div',undefined,'rule-layout');const controls=element('div'),right=element('div');
+  controls.append(element('p','当前地图','muted'),chooser);
+  let layerSelect=null;
+  try{
+    const summary=await api(endpoint(`maps/${map.id}/edge-rules`));
+    controls.append(element('p','地图图层','muted'));
+    layerSelect=element('select');for(const layer of summary.layers)layerSelect.append(new Option(layer.name,layer.id));
+    controls.append(layerSelect);
+    const rulesNow=summary.rules;
+    const rulesBox=element('div');
+    rulesBox.append(element('p','连接规则（每个瓦片的四边标签；相邻两边的标签相同或任一侧为 * 才能相接）','hint'));
+    if(rulesNow){
+      const list=element('div',undefined,'rule-tiles');
+      for(const [key,edges] of Object.entries(rulesNow.tiles)){
+        const card=element('div',undefined,'rule-card');const img=element('img');img.src=endpoint(`frames/${summary.tiles[Number(key.slice(2))-1]?.frame_id}/image`)+`?rev=${project().revision}`;img.alt='瓦片 '+key;
+        const tag=element('strong','瓦片 '+key.slice(2));card.append(img,tag,element('small',ruleRuleSummary(edges)));
+        card.onclick=()=>{openRuleEditor(summary);};
+        list.append(card);
+      }
+      rulesBox.append(list);
+      const edit=element('button','编辑规则集');
+      edit.onclick=()=>openRuleEditor(summary);rulesBox.append(edit);
+    }else{
+      rulesBox.append(element('p','尚未配置规则。可使用内置地形规则快速开始，并可在之后逐瓦片修改。','muted'));
+      const selectBox=element('select');for(const name of Object.keys(RULE_PRESETS))selectBox.append(new Option(name,name));
+      const apply=element('button','应用内置规则',undefined);apply.className='primary';
+      apply.onclick=guard(async()=>{await mutate('保存边缘规则…',endpoint(`maps/${map.id}/edge-rules`),{rules:RULE_PRESETS[selectBox.value]});await openRuleWorkspace(map.id)});
+      rulesBox.append(selectBox,apply);
+      const custom=element('button','手工填写规则');
+      custom.onclick=()=>openRuleEditor(summary);rulesBox.append(custom);
+    }
+    controls.append(rulesBox);
+    if(rulesNow){
+      const area=element('div',undefined,'rule-area');
+      area.append(element('p','铺设区域（地图格坐标）','muted'));
+      const fields=[['x','区域X',0,0,map.columns-1],['y','区域Y',0,0,map.rows-1],['width','区域宽',Math.min(6,map.columns),1,map.columns],['height','区域高',Math.min(4,map.rows),1,map.rows]];
+      const inputs={};
+      for(const [name,labelText,def,min,max] of fields){const wrap=element('label',labelText);const input=element('input');input.type='number';input.min=min;input.max=max;input.value=def;inputs[name]=input;wrap.append(input);area.append(wrap)}
+      controls.append(area);
+      const seedField=element('label','随机种子（同种子可复现）');const seedInput=element('input');seedInput.type='number';seedInput.min=0;seedInput.max=2147483647;seedInput.value=7;seedField.append(seedInput);
+      const pinExistingWrap=element('label',' 固定区域内已放置的格子','check');const pinExisting=element('input');pinExisting.type='checkbox';pinExistingWrap.prepend(pinExisting);
+      controls.append(seedField,pinExistingWrap);
+      const handBox=element('div');
+      handBox.append(element('p','手工固定格：输入 x,y,瓦片编号，可加水平/垂直翻转。空格的固定格需填写瓦片编号，也可直接在地图上点击放置。','hint'));
+      const pinList=element('div',undefined,'rule-pins');
+      const addPinButton=element('button','＋ 添加固定格');
+      function addPin(value={}){
+        const row=element('div',undefined,'pin-row');const x=element('input');x.type='number';x.placeholder='x';x.min=0;x.max=map.columns-1;const y=element('input');y.type='number';y.placeholder='y';y.min=0;y.max=map.rows-1;const t=element('input');t.type='number';t.placeholder='瓦片';t.min=1;t.max=map.tiles.length;const fx=element('label',' 水平','check'),fy=element('label',' 垂直','check');const fxInput=element('input'),fyInput=element('input');fxInput.type=fyInput.type='checkbox';fx.prepend(fxInput);fy.prepend(fyInput);const remove=element('button','×');remove.onclick=()=>{row.remove();invalidate('固定格已撤回，请重新求解或确认')};
+        row.append(element('span','('),x,element('span',','),y,element('span',')'),t,fx,fy,remove);row.dataset.pin='1';row.x=x;row.y=y;row.tile=t;row.fx=fxInput;row.fy=fyInput;
+        if(value.x!==undefined)x.value=value.x;if(value.y!==undefined)y.value=value.y;if(value.tile!==undefined)t.value=value.tile;
+        fxInput.checked=Boolean(value.flip_x);fyInput.checked=Boolean(value.flip_y);
+        for(const input of [x,y,t,fxInput,fyInput])input.addEventListener('change',()=>invalidate('固定格已修改，请重新求解预览'));
+        pinList.append(row);return row;
+      }
+      for(const pin of summary.saved_pins||[])addPin(pin);
+      addPinButton.onclick=()=>addPin();
+      handBox.append(pinList,addPinButton);
+      function readPins(){
+        const list=[];
+        for(const row of pinList.querySelectorAll('.pin-row')){
+          const x=row.x.value.trim(),y=row.y.value.trim(),tile=row.tile.value.trim();
+          if(x===''&&y===''&&tile==='')continue;
+          if(x===''||y==='')throw Error('固定格需要X和Y');
+          const pin={x:Number(x),y:Number(y)};
+          if(tile!=='')pin.tile=Number(tile);
+          if(row.fx.checked)pin.flip_x=true;if(row.fy.checked)pin.flip_y=true;
+          list.push(pin);
+        }
+        return list;
+      }
+      controls.append(handBox);
+      const solveButton=element('button','求解预览',undefined);solveButton.className='primary';
+      const propagateButton=element('button','仅推导');
+      const clearButton=element('button','撤回本次选择并清空预览');
+      const commitButton=element('button','确认铺设（可一次撤销）');
+      commitButton.disabled=true;
+      const toolbar=element('div',undefined,'rule-buttons');toolbar.append(solveButton,propagateButton,clearButton,commitButton);controls.append(toolbar);
+      const view=element('div',undefined,'rule-viewport');const canvas=element('canvas');canvas.id='ruleCanvas';view.append(canvas);right.append(view);
+      const report=element('div',undefined,'tool-output');right.append(element('p','未确定格与相邻连接','muted'),report);
+      let preview=null,previewToken=0,mapImage=null,advice=null;
+      function requestPayload(mode){const region={x:Number(inputs.x.value),y:Number(inputs.y.value),width:Number(inputs.width.value),height:Number(inputs.height.value)};return {revision:project().revision,map_id:map.id,layer_id:layerSelect.value,region,seed:Number(seedInput.value),mode,pin_existing:pinExisting.checked,pins:readPins()}}
+      function invalidate(message){if(!preview&&!advice)return;preview=null;advice=null;commitButton.disabled=true;report.replaceChildren();drawRuleCanvas();if(message)status(message)}
+      function resetPreview(){preview=null;advice=null;commitButton.disabled=true;report.replaceChildren();drawRuleCanvas();status('已撤回本次规则选择，地图未改动')}
+      for(const input of [...Object.values(inputs),seedInput,pinExisting,layerSelect]){input.addEventListener('input',()=>invalidate('参数已修改，请重新求解预览'));input.addEventListener('change',()=>invalidate('参数已修改，请重新求解预览'))}
+      clearButton.onclick=guard(()=>{if(S.busy)return;resetPreview()});
+      async function runPreview(mode){
+        if(!map.tiles.length)throw Error('地图还没有瓦片');
+        const payload=requestPayload(mode);
+        const result=await work('求解规则铺设预览…',()=>post(endpoint(`maps/${map.id}/edge-rules/preview`),payload));
+        if(result.status!=='solved'){
+          preview=null;advice=result;commitButton.disabled=true;renderConflict(result);drawRuleCanvas();status('规则铺设无解，地图与固定格均未改动',true);return
+        }
+        preview=result;advice=null;renderSolved(result);drawRuleCanvas();status(result.undetermined.length?`仅推导完成：${result.undetermined.length} 格未确定，${result.connection_count} 条连接。可继续求解或撤回。`:`已求出 ${result.stats.assigned} 格与 ${result.connection_count} 条相邻连接，尚未写入地图。`);
+        commitButton.disabled=Boolean(result.undetermined.length);
+      }
+      solveButton.onclick=guard(()=>runPreview('solve'));
+      propagateButton.onclick=guard(()=>runPreview('propagate'));
+      commitButton.onclick=guard(async()=>{
+        if(!preview||preview.status!=='solved')throw Error('请先完成完整求解预览');
+        if(!preview.fingerprint||preview.undetermined.length)throw Error('仍有未确定格，请使用完整求解后再确认');
+        await work('确认规则铺设…',async()=>{const result=await post(endpoint(`maps/${map.id}/edge-rules/commit`),{revision:project().revision,layer_id:preview.layer_id,region:preview.region,seed:preview.seed,mode:'solve',pin_existing:preview.pin_existing,pins:preview.pins.map(p=>({x:p.x,y:p.y,tile:p.tile,flip_x:p.flip_x,flip_y:p.flip_y})),fingerprint:preview.fingerprint});await acceptProject(result);map=project().tilemaps.find(m=>m.id===map.id)||map;status('铺设已写入地图，可一次撤销')});
+        preview=null;advice=null;commitButton.disabled=true;report.replaceChildren();await refreshMapImage();drawRuleCanvas();
+      });
+      async function refreshMapImage(){
+        const token=++previewToken;const image=new Image();
+        image.onload=()=>{if(token!==previewToken)return;mapImage=image;canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;drawRuleCanvas()};
+        image.onerror=()=>status('地图预览加载失败',true);
+        image.src=endpoint(`maps/${map.id}/image`)+`?rev=${project().revision}`;
+      }
+      function cellFromEvent(e){const rect=canvas.getBoundingClientRect();const x=Math.floor((e.clientX-rect.left)/rect.width*map.columns);const y=Math.floor((e.clientY-rect.top)/rect.height*map.rows);if(x<0||y<0||x>=map.columns||y>=map.rows)return null;return [x,y]}
+      function previewCellMap(){const values=new Map();if(preview){for(const cell of preview.cells)values.set(cell.x+','+cell.y,cell);for(const cell of preview.undetermined||[])values.set(cell.x+','+cell.y,cell)}return values}
+      function drawRuleCanvas(){
+        const w=map.columns*map.tile_width,h=map.rows*map.tile_height;if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h}
+        const ctx=canvas.getContext('2d');ctx.imageSmoothingEnabled=false;ctx.clearRect(0,0,w,h);if(mapImage)ctx.drawImage(mapImage,0,0,w,h);
+        const cells=previewCellMap();
+        const region=preview?.region;
+        for(const [key,cell] of cells){
+          const x=Number(key.split(',')[0]),y=Number(key.split(',')[1]);const left=x*map.tile_width,top=y*map.tile_height;
+          if(cell.status==='pinned'){ctx.fillStyle='#f8cc6533';ctx.fillRect(left,top,map.tile_width,map.tile_height);ctx.strokeStyle='#f8cc65';ctx.lineWidth=2;ctx.strokeRect(left+1,top+1,map.tile_width-2,map.tile_height-2)}
+          else if('candidate_count' in cell){ctx.fillStyle='#8b9cff22';ctx.fillRect(left,top,map.tile_width,map.tile_height);ctx.strokeStyle='#8b9cff';ctx.setLineDash([3,3]);ctx.strokeRect(left+1,top+1,map.tile_width-2,map.tile_height-2);ctx.setLineDash([])}
+          else if(cell.status==='solution'){ctx.fillStyle='#66e2bd22';ctx.fillRect(left,top,map.tile_width,map.tile_height);ctx.strokeStyle='#66e2bd';ctx.lineWidth=1;ctx.strokeRect(left+1,top+1,map.tile_width-2,map.tile_height-2)}
+        }
+        if(region){ctx.strokeStyle='#ffffffaa';ctx.lineWidth=2;ctx.strokeRect(region.x*map.tile_width+1,region.y*map.tile_height+1,region.width*map.tile_width-2,region.height*map.tile_height-2)}
+        if(preview&&preview.connections){ctx.lineWidth=2;const colors={'W':'#f8cc65','S':'#66e2bd','D':'#8b9cff','G':'#f58cab'};
+          for(const c of preview.connections){const a=c.first,b=c.second;const x1=(a[0]+.5)*map.tile_width,y1=(a[1]+.5)*map.tile_height,x2=(b[0]+.5)*map.tile_width,y2=(b[1]+.5)*map.tile_height;ctx.strokeStyle=colors[c.token]||'#ffffff';if(c.token==='*')ctx.strokeStyle='#ffffffff';ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke()}
+        }
+        if(advice){const mark=new Set();for(const item of (advice.conflicting_pins||[]))mark.add(item.x+','+item.y);for(const item of (advice.conflicting_fixed||[]))mark.add(item.x+','+item.y);for(const coord of (advice.dead_end_cells||[]))mark.add(coord[0]+','+coord[1]);for(const key of mark){const [x,y]=key.split(',').map(Number);ctx.strokeStyle='#ff7185';ctx.lineWidth=2;ctx.strokeRect(x*map.tile_width+1,y*map.tile_height+1,map.tile_width-2,map.tile_height-2)}}
+        ctx.strokeStyle='#e0edff35';for(let x=0;x<=w;x+=map.tile_width){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke()}for(let y=0;y<=h;y+=map.tile_height){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}
+      }
+      canvas.onclick=guard(async e=>{
+        if(S.busy)return;const cell=cellFromEvent(e);if(!cell)return;
+        const [x,y]=cell;const layer=map.layers.find(l=>l.id===layerSelect.value)||map.layers[0];
+        const value=layer.data[y*map.columns+x]||0;if(!value){status('该格为空，固定空格请先在瓦片地图中放一个瓦片，或手工填写瓦片编号',true);return}
+        const existing=[...pinList.querySelectorAll('.pin-row')].find(item=>Number(item.x.value)===x&&Number(item.y.value)===y);
+        if(existing){existing.remove();invalidate('该固定格已撤回');status(`已撤回固定格 (${x},${y})`);return}
+        invalidate();addPin({x,y,tile:value&0x1FFFFFFF,flip_x:Boolean(value&0x80000000),flip_y:Boolean(value&0x40000000)});
+        status(`已把 (${x},${y}) 加为固定格（再次点击可撤回），求解前可继续调整`);
+      });
+      function renderSolved(result){
+        report.replaceChildren();
+        const stats=element('div',undefined,'metric-grid');
+        const cards=[['区域格',result.stats.region_cells],['已确定',result.stats.assigned],['固定',result.stats.pinned],['推导',result.stats.forced],['求解',result.stats.solution],['未确定',result.stats.undetermined],['相邻连接',result.connection_count],['搜索步数',result.stats.search_steps],['种子',result.seed]];
+        for(const [name,value] of cards){const card=element('div',undefined,'metric');card.append(element('small',name),element('strong',fmt(value)));stats.append(card)}
+        report.append(stats);
+        if(result.undetermined.length){const table=element('div',undefined,'table-wrap');const t=element('table');const head=element('tr');for(const text of ['格子','候选数','候选瓦片','固定'])head.append(element('th',text));const thead=element('thead');thead.append(head);t.append(thead);const bodyRows=element('tbody');for(const cell of result.undetermined.slice(0,200)){const tr=element('tr');tr.append(element('td',`${cell.x},${cell.y}`),element('td',String(cell.candidate_count)),element('td',cell.candidates.join(', ')+(cell.candidates_truncated?' …':'')),element('td',cell.fixed?'是':'否'));bodyRows.append(tr)}t.append(bodyRows);table.append(t);report.append(element('h3','未确定格子'),table)}
+        const tokens=result.connection_tokens||{};const tokenRow=element('p','连接标签统计：'+Object.entries(tokens).map(([key,count])=>`${key}=${count}`).join(' · '),'hint');report.append(tokenRow);
+        const list=element('div',undefined,'table-wrap');const t=element('table');const head=element('tr');for(const text of ['相邻格','方向','标签','瓦片','到区域边界'])head.append(element('th',text));const thead=element('thead');thead.append(head);t.append(thead);const bodyRows=element('tbody');for(const c of result.connections.slice(0,300)){const tr=element('tr');tr.append(element('td',`${c.first[0]},${c.first[1]} → ${c.second[0]},${c.second[1]}`),element('td',DIRECTION_NAMES[c.direction]||c.direction),element('td',c.token),element('td',c.tiles.join(' / ')),element('td',c.to_border?'是':'否'));bodyRows.append(tr)}t.append(bodyRows);list.append(t);report.append(element('h3','相邻连接'),list);
+        if(result.fixed_border&&result.fixed_border.length){const text=result.fixed_border.slice(0,12).map(c=>`(${c.x},${c.y})瓦片${c.tile}`).join('、');report.append(element('p','区域外参与约束的已放置边缘：'+text,'hint'))}
+      }
+      function renderConflict(result){
+        report.replaceChildren();
+        const box=element('div',undefined,'rule-conflict');
+        box.append(element('h3','无解：地图未改动'),element('p',result.message||'规则铺设无解'));
+        const pins=result.conflicting_pins||[];
+        if(pins.length){
+          const text=pins.map(p=>`(${p.x},${p.y}) 瓦片${p.tile}`).join('、');
+          box.append(element('p','冲突固定格：'+text));
+        }
+        const fixed=result.conflicting_fixed||[];
+        const other=fixed.filter(p=>!pins.some(q=>q.x===p.x&&q.y===p.y));
+        if(other.length){
+          const text=other.map(p=>`(${p.x},${p.y}) 瓦片${p.tile}`).join('、');
+          box.append(element('p','冲突的已放置边界：'+text));
+        }
+        const rules=result.conflicting_rules||[];
+        if(rules.length){
+          const text=rules.map(r=>`瓦片${r.tile}（${r.name}）`).join('、');
+          box.append(element('p','涉及规则：'+text));
+        }
+        if(result.dead_end&&result.dead_end.cell){
+          const cell=result.dead_end.cell;
+          const where=result.dead_end.direction?DIRECTION_NAMES[result.dead_end.direction]+'方向':'';
+          box.append(element('p',`推导死胡同：(${cell[0]},${cell[1]}) 在${where}已无候选瓦片。`));
+        }
+        const pairs=(result.conflicts||[]).filter(c=>c.kind==='fixed_pair');
+        if(pairs.length){
+          const list=element('div');
+          for(const pair of pairs)list.append(element('p','· '+pair.message));
+          box.append(list);
+        }
+        const retry=element('button','撤回冲突固定格并重新求解');
+        retry.className='primary';
+        retry.onclick=guard(async()=>{
+          const bad=new Set(pins.map(p=>p.x+','+p.y));
+          for(const row of pinList.querySelectorAll('.pin-row')){
+            if(bad.has(Number(row.x.value)+','+Number(row.y.value)))row.remove();
+          }
+          invalidate();
+          status(`已撤回 ${bad.size} 个冲突固定格，正在重新求解`);
+          await runPreview('solve');
+        });
+        const withdraw=element('button','撤回本次选择');
+        withdraw.onclick=guard(()=>{invalidate();status('已撤回本次选择与预览，可调整后重新求解')});
+        box.append(retry,withdraw);
+        report.append(box);
+      }
+      await refreshMapImage();
+      layout.append(controls,right);body.append(intro,layout);
+    }else{
+      layout.append(controls);body.append(intro,layout);
+    }
+  }catch(error){reportError(error)}
+}
+
+function reportError(error){status(error.message||String(error),true)}
+
+async function openRuleEditor(summary){
+  const body=dialog('瓦片边缘规则');
+  const directions=['north','east','south','west'];
+  const current={};for(const [key,edges] of Object.entries(summary.rules?.tiles||{})){const n=Number(key.slice(2));current[n]={...edges}}
+  const list=element('div',undefined,'rule-editor');const rows={};
+  function addRow(n,edges={}){
+    const row=element('div',undefined,'rule-editor-row');row.append(element('strong','瓦片 '+n));const cells={};
+    for(const direction of directions){const wrap=element('label',DIRECTION_NAMES[direction]+'边');const input=element('input');input.type='text';input.maxLength=32;input.value=edges[direction]??'*';cells[direction]=input;wrap.append(input);row.append(wrap)}
+    const remove=element('button','移除');remove.onclick=()=>{row.remove();delete rows[n]};row.append(remove);rows[n]=cells;list.append(row)
+  }
+  for(const [key,edges] of Object.entries(current))addRow(Number(key.slice(2)),edges);
+  const addButton=element('button','＋ 添加瓦片规则');addButton.onclick=()=>{const available=[];for(let i=1;i<=summary.tile_count;i++)if(!rows[i])available.push(i);if(!available.length){status('所有瓦片都已配置规则',true);return}addRow(available[0])};
+  const presetBox=element('select');for(const name of Object.keys(RULE_PRESETS))presetBox.append(new Option(name,name));
+  const presetButton=element('button','用内置规则填充');presetButton.onclick=guard(()=>{const preset=RULE_PRESETS[presetBox.value];list.replaceChildren();for(const key of Object.keys(rows))delete rows[key];for(const [k,edges] of Object.entries(preset.tiles))addRow(Number(k),edges)});
+  const nameField=element('label','规则集名称');const nameInput=element('input');nameInput.type='text';nameInput.value=summary.rules?.name||'地形边缘规则';nameField.append(nameInput);
+  function collect(){
+    const tiles={};
+    for(const [n,cells] of Object.entries(rows)){const entry={};for(const direction of directions){const value=cells[direction].value.trim();if(!value)throw Error(`瓦片 ${n} 的${DIRECTION_NAMES[direction]}边需要标签，可用 * 表示通配`);entry[direction]=value}tiles[n]=entry}
+    if(!Object.keys(tiles).length)throw Error('请至少配置一个瓦片规则');
+    return {name:nameInput.value.trim()||'地形边缘规则',tiles};
+  }
+  const save=element('button','保存规则集',undefined);save.className='primary';
+  save.onclick=guard(async()=>{const rules=collect();await mutate('保存边缘规则…',endpoint(`maps/${summary.map_id}/edge-rules`),{rules});$('dialog').close();openRuleWorkspace(summary.map_id)});
+  const clear=element('button','清除规则集（地图数据不变）');clear.onclick=guard(async()=>{await mutate('清除边缘规则…',endpoint(`maps/${summary.map_id}/edge-rules`),{rules:null});$('dialog').close();openRuleWorkspace(summary.map_id)});
+  body.append(presetBox,presetButton,nameField,element('p','每张瓦片给出上右下左边标签。两个相邻格只有在相接的两边标签相同，或其中一边为 * 时才能放置。水平/垂直翻转会交换对应边。','hint'),list,addButton,element('p'),save,clear);
+}
+
 async function openMaps(mapId=null){
   project();const body=dialog('瓦片地图编辑器');if(!project().tilemaps.length){body.append(element('p','将当前选中帧作为瓦片集合，可创建关卡草图并导出Tiled JSON与瓦片PNG。未选时使用全部帧。','hint'));body.append(form([text('name','地图名称','我的关卡'),num('columns','地图列数',12,1,100),num('rows','地图行数',8,1,100),num('tile_width','瓦片宽度',Math.min(32,project().width),8,256),num('tile_height','瓦片高度',Math.min(32,project().height),8,256)],'创建地图',async data=>{await mutate('创建瓦片地图…',endpoint('maps'),{...data,tiles:ids()});await openMaps()}));return}
   let map=project().tilemaps.find(m=>m.id===mapId)||project().tilemaps[0];const layout=element('div',undefined,'map-layout'),controls=element('div'),right=element('div');const chooser=element('select');for(const item of project().tilemaps)chooser.append(new Option(item.name,item.id));chooser.value=map.id;chooser.onchange=()=>openMaps(chooser.value);controls.append(chooser);let tile=1,layerId=map.layers[0].id;const layerSelect=element('select');for(const layer of map.layers)layerSelect.append(new Option(layer.name,layer.id));layerSelect.onchange=()=>layerId=layerSelect.value;controls.append(element('p','当前地图图层','muted'),layerSelect,element('p','点击瓦片，再点击地图格子绘制。','hint'));

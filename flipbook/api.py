@@ -597,6 +597,31 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
     def map_export(key, map_id):
         with store.lock:
             return download(tiled_bundle(store, tilemaps, store.get(key), map_id), 'tilemap.zip', 'application/zip')
+    @api.get('/projects/<key>/maps/<map_id>/edge-rules')
+    def edge_rules(key, map_id):
+        from . import tile_rules
+        with store.lock:
+            return jsonify(tile_rules.rules_summary(store.get(key), map_id))
+
+    @api.post('/projects/<key>/maps/<map_id>/edge-rules')
+    def set_edge_rules(key, map_id):
+        from . import tile_rules
+        data = body()
+        return jsonify(tile_rules.set_rules(store, key, v.revision(data), map_id, data))
+
+    @api.post('/projects/<key>/maps/<map_id>/edge-rules/preview')
+    def preview_edge_rules(key, map_id):
+        from . import tile_rules
+        data = body()
+        v.revision(data)
+        with store.lock:
+            return jsonify(tile_rules.preview(store.get(key), map_id, data))
+
+    @api.post('/projects/<key>/maps/<map_id>/edge-rules/commit')
+    def commit_edge_rules(key, map_id):
+        from . import tile_rules
+        data = body()
+        return jsonify(tile_rules.commit(store, key, v.revision(data), map_id, data))
 
     @api.post('/projects/<key>/matte')
     def matte(key):

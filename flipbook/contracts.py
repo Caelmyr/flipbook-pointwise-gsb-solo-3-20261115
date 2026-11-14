@@ -57,6 +57,8 @@ def validate_document(project):
         v.text(tilemap['name'], '地图名称', 100, False)
         from .map_animation import validate_map
         validate_map(project, tilemap)
+        from .tile_rules import validate_stored_rules
+        validate_stored_rules(tilemap)
         columns = v.integer(tilemap['columns'], '地图列数', 1, 100)
         rows = v.integer(tilemap['rows'], '地图行数', 1, 100)
         tw = v.integer(tilemap['tile_width'], '瓦片宽度', 8, 256)
