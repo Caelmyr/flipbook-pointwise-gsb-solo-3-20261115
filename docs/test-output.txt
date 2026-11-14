@@ -1,0 +1,36 @@
+test_all_original_demos (test_workflows.Workflows.test_all_original_demos) ... ok
+test_alpha_bleed_survives_render_and_png_export (test_workflows.Workflows.test_alpha_bleed_survives_render_and_png_export) ... ok
+test_apng_and_gif_decode_frames_duration_transparency (test_workflows.Workflows.test_apng_and_gif_decode_frames_duration_transparency) ... ok
+test_app_reload_persistence (test_workflows.Workflows.test_app_reload_persistence) ... ok
+test_archive_rejects_traversal_and_missing_assets (test_workflows.Workflows.test_archive_rejects_traversal_and_missing_assets) ... ok
+test_atlas_pixel_roundtrip_and_no_overlaps (test_workflows.Workflows.test_atlas_pixel_roundtrip_and_no_overlaps) ... ok
+test_auto_sprite_slice (test_workflows.Workflows.test_auto_sprite_slice) ... ok
+test_crossfade_preserves_unassociated_color (test_workflows.Workflows.test_crossfade_preserves_unassociated_color) ... ok
+test_export_jobs_all_formats (test_workflows.Workflows.test_export_jobs_all_formats) ... ok
+test_flood_fill_stays_inside_shape (test_workflows.Workflows.test_flood_fill_stays_inside_shape) ... ok
+test_geometry_scales_boxes_and_pivots (test_workflows.Workflows.test_geometry_scales_boxes_and_pivots) ... ok
+test_gif_opaque_black_not_reserved_transparency (test_workflows.Workflows.test_gif_opaque_black_not_reserved_transparency) ... ok
+test_layer_duplicate_merge_matches_render (test_workflows.Workflows.test_layer_duplicate_merge_matches_render) ... ok
+test_layer_opacity_and_blending (test_workflows.Workflows.test_layer_opacity_and_blending) ... ok
+test_locked_layer_rejects_and_revision_unchanged (test_workflows.Workflows.test_locked_layer_rejects_and_revision_unchanged) ... ok
+test_matte_and_auto_collision (test_workflows.Workflows.test_matte_and_auto_collision) ... ok
+test_mirror_drawing_and_erase (test_workflows.Workflows.test_mirror_drawing_and_erase) ... ok
+test_named_versions_restore_fork_compare (test_workflows.Workflows.test_named_versions_restore_fork_compare) ... ok
+test_ninepatch_preserves_corners (test_workflows.Workflows.test_ninepatch_preserves_corners) ... ok
+test_palette_extraction_and_mapping (test_workflows.Workflows.test_palette_extraction_and_mapping) ... ok
+test_pencil_draw_and_undo_redo (test_workflows.Workflows.test_pencil_draw_and_undo_redo) ... ok
+test_pingpong_does_not_duplicate_endpoints (test_workflows.Workflows.test_pingpong_does_not_duplicate_endpoints) ... ok
+test_pipeline_atomic_rollback (test_workflows.Workflows.test_pipeline_atomic_rollback) ... ok
+test_project_bundle_roundtrip (test_workflows.Workflows.test_project_bundle_roundtrip) ... ok
+test_retime_preserves_exact_total (test_workflows.Workflows.test_retime_preserves_exact_total) ... ok
+test_revision_conflict_and_invalid_inputs (test_workflows.Workflows.test_revision_conflict_and_invalid_inputs) ... ok
+test_seam_blend_matches_opposite_edges (test_workflows.Workflows.test_seam_blend_matches_opposite_edges) ... ok
+test_tilemap_fill_paint_and_export (test_workflows.Workflows.test_tilemap_fill_paint_and_export) ... ok
+test_tilemap_reference_blocks_frame_deletion (test_workflows.Workflows.test_tilemap_reference_blocks_frame_deletion) ... ok
+test_time_resample_total_preserved (test_workflows.Workflows.test_time_resample_total_preserved) ... ok
+test_transform_tween_end_state (test_workflows.Workflows.test_transform_tween_end_state) ... ok
+
+----------------------------------------------------------------------
+Ran 31 tests in 1.112s
+
+OK

@@ -1,0 +1,197 @@
+ Image solo-5-flipbook:local Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 534B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 889B done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/python:3.12-slim
+#3 DONE 2.6s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 111B done
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 760.28kB 0.0s done
+#5 DONE 0.0s
+
+#6 [ 1/10] FROM docker.io/library/python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+#6 resolve docker.io/library/python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b done
+#6 sha256:05e0eee5572e9c9f50408a2132590133b830a668a1cf2ff2b150f19c57707e2b 0B / 248B 0.2s
+#6 sha256:2dc99d2d0a39fce31e37615eb4c932e16dcc4c2b0ce9993714280081b5dbe085 0B / 12.12MB 0.2s
+#6 sha256:68bced9e0afa4479df17c3646e27c7c7e9ce9ba70c0e6c73b6826487b89037d9 0B / 1.29MB 0.2s
+#6 sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 0B / 29.86MB 0.2s
+#6 sha256:05e0eee5572e9c9f50408a2132590133b830a668a1cf2ff2b150f19c57707e2b 248B / 248B 0.5s done
+#6 sha256:2dc99d2d0a39fce31e37615eb4c932e16dcc4c2b0ce9993714280081b5dbe085 1.05MB / 12.12MB 0.9s
+#6 sha256:2dc99d2d0a39fce31e37615eb4c932e16dcc4c2b0ce9993714280081b5dbe085 2.10MB / 12.12MB 1.2s
+#6 sha256:2dc99d2d0a39fce31e37615eb4c932e16dcc4c2b0ce9993714280081b5dbe085 3.15MB / 12.12MB 1.5s
+#6 sha256:2dc99d2d0a39fce31e37615eb4c932e16dcc4c2b0ce9993714280081b5dbe085 4.19MB / 12.12MB 1.7s
+#6 sha256:2dc99d2d0a39fce31e37615eb4c932e16dcc4c2b0ce9993714280081b5dbe085 5.24MB / 12.12MB 2.0s
+#6 sha256:68bced9e0afa4479df17c3646e27c7c7e9ce9ba70c0e6c73b6826487b89037d9 1.29MB / 1.29MB 2.0s done
+#6 sha256:2dc99d2d0a39fce31e37615eb4c932e16dcc4c2b0ce9993714280081b5dbe085 6.29MB / 12.12MB 2.3s
+#6 sha256:2dc99d2d0a39fce31e37615eb4c932e16dcc4c2b0ce9993714280081b5dbe085 7.34MB / 12.12MB 2.6s
+#6 sha256:2dc99d2d0a39fce31e37615eb4c932e16dcc4c2b0ce9993714280081b5dbe085 8.39MB / 12.12MB 2.7s
+#6 sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 2.10MB / 29.86MB 2.6s
+#6 sha256:2dc99d2d0a39fce31e37615eb4c932e16dcc4c2b0ce9993714280081b5dbe085 9.44MB / 12.12MB 3.0s
+#6 sha256:2dc99d2d0a39fce31e37615eb4c932e16dcc4c2b0ce9993714280081b5dbe085 10.49MB / 12.12MB 3.3s
+#6 sha256:2dc99d2d0a39fce31e37615eb4c932e16dcc4c2b0ce9993714280081b5dbe085 11.53MB / 12.12MB 3.6s
+#6 sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 4.19MB / 29.86MB 3.5s
+#6 sha256:2dc99d2d0a39fce31e37615eb4c932e16dcc4c2b0ce9993714280081b5dbe085 12.12MB / 12.12MB 3.7s done
+#6 sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 6.29MB / 29.86MB 4.1s
+#6 sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 8.39MB / 29.86MB 4.4s
+#6 sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 10.49MB / 29.86MB 4.7s
+#6 sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 12.58MB / 29.86MB 5.1s
+#6 sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 14.68MB / 29.86MB 5.4s
+#6 sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 16.78MB / 29.86MB 5.7s
+#6 sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 18.87MB / 29.86MB 6.0s
+#6 sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 20.97MB / 29.86MB 6.5s
+#6 sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 23.07MB / 29.86MB 6.8s
+#6 sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 25.17MB / 29.86MB 7.1s
+#6 sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 27.26MB / 29.86MB 7.4s
+#6 sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 29.86MB / 29.86MB 7.8s done
+#6 extracting sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41
+#6 extracting sha256:37fb86c2a767b88d500c6872195f88078f64765fe0d2f9cc375cc2efbd4c0a41 0.8s done
+#6 DONE 8.6s
+
+#6 [ 1/10] FROM docker.io/library/python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+#6 extracting sha256:68bced9e0afa4479df17c3646e27c7c7e9ce9ba70c0e6c73b6826487b89037d9 0.1s done
+#6 extracting sha256:2dc99d2d0a39fce31e37615eb4c932e16dcc4c2b0ce9993714280081b5dbe085
+#6 extracting sha256:2dc99d2d0a39fce31e37615eb4c932e16dcc4c2b0ce9993714280081b5dbe085 0.4s done
+#6 DONE 9.1s
+
+#6 [ 1/10] FROM docker.io/library/python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+#6 extracting sha256:05e0eee5572e9c9f50408a2132590133b830a668a1cf2ff2b150f19c57707e2b done
+#6 DONE 9.1s
+
+#7 [ 2/10] WORKDIR /app
+#7 DONE 0.1s
+
+#8 [ 3/10] RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core fonts-noto-cjk && rm -rf /var/lib/apt/lists/*
+#8 0.292 Hit:1 http://deb.debian.org/debian trixie InRelease
+#8 0.318 Get:2 http://deb.debian.org/debian trixie-updates InRelease [47.3 kB]
+#8 0.371 Get:3 http://deb.debian.org/debian-security trixie-security InRelease [43.4 kB]
+#8 0.418 Get:4 http://deb.debian.org/debian trixie/main amd64 Packages [9678 kB]
+#8 1.977 Get:5 http://deb.debian.org/debian trixie-updates/main amd64 Packages [1108 B]
+#8 2.001 Get:6 http://deb.debian.org/debian-security trixie-security/main amd64 Packages [303 kB]
+#8 2.923 Fetched 10.1 MB in 3s (3659 kB/s)
+#8 2.923 Reading package lists...
+#8 3.637 Reading package lists...
+#8 4.365 Building dependency tree...
+#8 4.544 Reading state information...
+#8 4.745 The following additional packages will be installed:
+#8 4.747   fonts-dejavu-mono
+#8 4.749 Suggested packages:
+#8 4.749   fonts-noto-cjk-extra
+#8 4.782 The following NEW packages will be installed:
+#8 4.784   fonts-dejavu-core fonts-dejavu-mono fonts-noto-cjk
+#8 4.891 0 upgraded, 3 newly installed, 0 to remove and 1 not upgraded.
+#8 4.891 Need to get 58.0 MB of archives.
+#8 4.891 After this operation, 97.1 MB of additional disk space will be used.
+#8 4.891 Get:1 http://deb.debian.org/debian trixie/main amd64 fonts-dejavu-mono all 2.37-8 [489 kB]
+#8 5.037 Get:2 http://deb.debian.org/debian trixie/main amd64 fonts-dejavu-core all 2.37-8 [840 kB]
+#8 5.172 Get:3 http://deb.debian.org/debian trixie/main amd64 fonts-noto-cjk all 1:20240730+repack1-1 [56.7 MB]
+#8 14.39 debconf: unable to initialize frontend: Dialog
+#8 14.39 debconf: (TERM is not set, so the dialog frontend is not usable.)
+#8 14.39 debconf: falling back to frontend: Readline
+#8 14.39 debconf: unable to initialize frontend: Readline
+#8 14.39 debconf: (Can't locate Term/ReadLine.pm in @INC (you may need to install the Term::ReadLine module) (@INC entries checked: /etc/perl /usr/local/lib/x86_64-linux-gnu/perl/5.40.1 /usr/local/share/perl/5.40.1 /usr/lib/x86_64-linux-gnu/perl5/5.40 /usr/share/perl5 /usr/lib/x86_64-linux-gnu/perl-base /usr/lib/x86_64-linux-gnu/perl/5.40 /usr/share/perl/5.40 /usr/local/lib/site_perl) at /usr/share/perl5/Debconf/FrontEnd/Readline.pm line 8, <STDIN> line 3.)
+#8 14.39 debconf: falling back to frontend: Teletype
+#8 14.39 debconf: unable to initialize frontend: Teletype
+#8 14.39 debconf: (This frontend requires a controlling tty.)
+#8 14.39 debconf: falling back to frontend: Noninteractive
+#8 15.13 Fetched 58.0 MB in 9s (6140 kB/s)
+#8 15.15 Selecting previously unselected package fonts-dejavu-mono.
+#8 15.15 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 5658 files and directories currently installed.)
+#8 15.16 Preparing to unpack .../fonts-dejavu-mono_2.37-8_all.deb ...
+#8 15.16 Unpacking fonts-dejavu-mono (2.37-8) ...
+#8 15.20 Selecting previously unselected package fonts-dejavu-core.
+#8 15.21 Preparing to unpack .../fonts-dejavu-core_2.37-8_all.deb ...
+#8 15.23 Unpacking fonts-dejavu-core (2.37-8) ...
+#8 15.30 Selecting previously unselected package fonts-noto-cjk.
+#8 15.30 Preparing to unpack .../fonts-noto-cjk_1%3a20240730+repack1-1_all.deb ...
+#8 15.31 Unpacking fonts-noto-cjk (1:20240730+repack1-1) ...
+#8 16.63 Setting up fonts-noto-cjk (1:20240730+repack1-1) ...
+#8 16.65 Setting up fonts-dejavu-mono (2.37-8) ...
+#8 16.66 Setting up fonts-dejavu-core (2.37-8) ...
+#8 DONE 16.8s
+
+#9 [ 4/10] COPY requirements.txt .
+#9 DONE 0.0s
+
+#10 [ 5/10] RUN pip install --no-cache-dir -r requirements.txt
+#10 1.821 Collecting blinker==1.9.0 (from -r requirements.txt (line 1))
+#10 1.928   Downloading blinker-1.9.0-py3-none-any.whl.metadata (1.6 kB)
+#10 1.991 Collecting click==8.5.1 (from -r requirements.txt (line 2))
+#10 2.038   Downloading click-8.5.1-py3-none-any.whl.metadata (2.6 kB)
+#10 2.100 Collecting Flask==3.1.3 (from -r requirements.txt (line 3))
+#10 2.143   Downloading flask-3.1.3-py3-none-any.whl.metadata (3.2 kB)
+#10 2.205 Collecting itsdangerous==2.2.0 (from -r requirements.txt (line 4))
+#10 2.259   Downloading itsdangerous-2.2.0-py3-none-any.whl.metadata (1.9 kB)
+#10 2.315 Collecting Jinja2==3.1.6 (from -r requirements.txt (line 5))
+#10 2.348   Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+#10 2.454 Collecting MarkupSafe==3.0.4 (from -r requirements.txt (line 6))
+#10 2.508   Downloading markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+#10 2.979 Collecting numpy==2.5.4 (from -r requirements.txt (line 7))
+#10 3.035   Downloading numpy-2.5.4-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (6.6 kB)
+#10 3.344 Collecting pillow==13.0.0 (from -r requirements.txt (line 8))
+#10 3.382   Downloading pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.1 kB)
+#10 3.443 Collecting waitress==3.0.2 (from -r requirements.txt (line 9))
+#10 3.488   Downloading waitress-3.0.2-py3-none-any.whl.metadata (5.8 kB)
+#10 3.551 Collecting Werkzeug==3.1.9 (from -r requirements.txt (line 10))
+#10 3.585   Downloading werkzeug-3.1.9-py3-none-any.whl.metadata (4.1 kB)
+#10 3.672 Downloading blinker-1.9.0-py3-none-any.whl (8.5 kB)
+#10 3.719 Downloading click-8.5.1-py3-none-any.whl (126 kB)
+#10 3.806 Downloading flask-3.1.3-py3-none-any.whl (103 kB)
+#10 3.880 Downloading itsdangerous-2.2.0-py3-none-any.whl (16 kB)
+#10 3.926 Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+#10 4.001 Downloading markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+#10 4.057 Downloading numpy-2.5.4-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (16.7 MB)
+#10 6.731    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.7/16.7 MB 6.3 MB/s eta 0:00:00
+#10 6.776 Downloading pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (7.1 MB)
+#10 7.914    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 7.1/7.1 MB 6.3 MB/s eta 0:00:00
+#10 7.979 Downloading waitress-3.0.2-py3-none-any.whl (56 kB)
+#10 8.053 Downloading werkzeug-3.1.9-py3-none-any.whl (228 kB)
+#10 8.219 Installing collected packages: waitress, pillow, numpy, MarkupSafe, itsdangerous, click, blinker, Werkzeug, Jinja2, Flask
+#10 11.53 Successfully installed Flask-3.1.3 Jinja2-3.1.6 MarkupSafe-3.0.4 Werkzeug-3.1.9 blinker-1.9.0 click-8.5.1 itsdangerous-2.2.0 numpy-2.5.4 pillow-13.0.0 waitress-3.0.2
+#10 11.53 WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+#10 11.94 
+#10 11.94 [notice] A new release of pip is available: 25.0.1 -> 26.3
+#10 11.94 [notice] To update, run: pip install --upgrade pip
+#10 DONE 12.1s
+
+#11 [ 6/10] RUN useradd --uid 10001 --create-home studio && mkdir -p /app/data && chown studio:studio /app/data
+#11 DONE 0.1s
+
+#12 [ 7/10] COPY --chown=studio:studio app.py ./
+#12 DONE 0.0s
+
+#13 [ 8/10] COPY --chown=studio:studio flipbook ./flipbook
+#13 DONE 0.1s
+
+#14 [ 9/10] COPY --chown=studio:studio static ./static
+#14 DONE 0.0s
+
+#15 [10/10] COPY --chown=studio:studio templates ./templates
+#15 DONE 0.0s
+
+#16 exporting to oci image format
+#16 exporting layers
+#16 exporting layers 4.7s done
+#16 exporting manifest sha256:66f0300186e8acd59fd6d48a7d54cce44bf7c6b0091b41373e83fc2199b35f0a done
+#16 exporting config sha256:368b681c3e6b39774854848531d9f15e12f4fa27964f9140654ab591a6aaa201 done
+#16 sending tarball
+#16 ...
+
+#17 importing to docker
+#17 DONE 0.0s
+
+#16 exporting to oci image format
+#16 sending tarball 6.8s done
+#16 DONE 11.5s
+
+#18 resolving provenance for metadata file
+#18 DONE 0.0s
+ Image solo-5-flipbook:local Built 

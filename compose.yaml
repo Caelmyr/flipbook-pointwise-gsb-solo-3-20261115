@@ -1,0 +1,17 @@
+name: solo5
+services:
+  flipbook:
+    build: .
+    image: solo-5-flipbook:local
+    ports:
+      - "127.0.0.1:${FLIPBOOK_PORT:-8895}:8895"
+    volumes:
+      - flipbook-data:/app/data
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  flipbook-data:

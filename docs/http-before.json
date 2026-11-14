@@ -1,0 +1,15 @@
+{
+  "health": {
+    "application": "Flipbook Studio",
+    "status": "ok",
+    "version": "1.0"
+  },
+  "project_id": "fa15651558544a499e31ed8a50dc827d",
+  "project_sha256": "7fa0481ea4b56441453983490dfee529f89d701bef56507b94849366246e8989",
+  "first_frame_sha256": "ebdae80d2ede22f5d819c363fa9171f3309b1349c1e0aebd7a040b718dc29121",
+  "export_job_id": "835f9c9663724c398d6386a926dac4ff",
+  "export_sha256": "7fec7f7c83376fd2c37cf3ac13940c9b96dbc5a8a29fe43f27ac67f4e7675ae4",
+  "decoded_frames": 12,
+  "decoded_duration_ms": 1080.0,
+  "transparent_corner": true
+}

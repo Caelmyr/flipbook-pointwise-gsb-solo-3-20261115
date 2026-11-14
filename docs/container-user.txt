@@ -1,0 +1,1 @@
+uid=10001(studio) gid=10001(studio) groups=10001(studio)

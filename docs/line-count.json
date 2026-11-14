@@ -1,0 +1,182 @@
+{
+  "method": "仅app.py和flipbook包的自有Python后台。tokenize排除空行、注释、缩进、纯字符串内容标记；AST排除所有独立字符串表达式和文档字符串。前端、测试、脚本、依赖、虚拟环境、演示二进制资源不计。与根目录统计后端有效行数.py的measure口径相同。",
+  "files": [
+    {
+      "file": "app.py",
+      "effective_lines": 9,
+      "sha256": "786263e697b8fee2f1f1c2c10c7d78a9505c0e955054b076e3d9a54ef8a31798"
+    },
+    {
+      "file": "flipbook/__init__.py",
+      "effective_lines": 53,
+      "sha256": "fb542dc7bf0a8f4e9e8fbc81ed679b573828105aa9ee918c8d12cf48da16bc4c"
+    },
+    {
+      "file": "flipbook/analysis.py",
+      "effective_lines": 172,
+      "sha256": "7104e63f618976eb9d9d807c5cb48ff02993a84581e87937c1abcf5248f14a2a"
+    },
+    {
+      "file": "flipbook/api.py",
+      "effective_lines": 537,
+      "sha256": "a6d51747422d82f5b617998d213afcafc7a1f4c4cbf9f6a3d33881e4902db2bf"
+    },
+    {
+      "file": "flipbook/atlas.py",
+      "effective_lines": 211,
+      "sha256": "cb1910f575cf13ac8e8e41f80f72332e8acb094a807d9194c52db01c5c9a32fd"
+    },
+    {
+      "file": "flipbook/atlas_import.py",
+      "effective_lines": 108,
+      "sha256": "a5899f5225a0f21e2a7f0e23e6834b719d5c66423273ab40fc99f7bcd9ec7574"
+    },
+    {
+      "file": "flipbook/autoslice.py",
+      "effective_lines": 82,
+      "sha256": "2f53199311881bc5637aa5c50a5c7fe66ff5f1473e0862cfd5fa4c1d58afdb56"
+    },
+    {
+      "file": "flipbook/catalog.py",
+      "effective_lines": 213,
+      "sha256": "252f93c6af4f670aae75bb2d95feb03e01446a432e09c90374c7e6691a5c0ad3"
+    },
+    {
+      "file": "flipbook/collision.py",
+      "effective_lines": 102,
+      "sha256": "873a763f46580292f5f89b9bbab38ec345df6e3c0ea23dadc56456c5faa177a8"
+    },
+    {
+      "file": "flipbook/composite.py",
+      "effective_lines": 143,
+      "sha256": "d7521496842dc6344f87642698510eeabd195b2cc806990d2abfe65177af417a"
+    },
+    {
+      "file": "flipbook/contracts.py",
+      "effective_lines": 115,
+      "sha256": "5eee2ecd19b91e8b5f088f25b75aac840b9f19b261ade5cc83479b171483a23c"
+    },
+    {
+      "file": "flipbook/drawing.py",
+      "effective_lines": 161,
+      "sha256": "d0572717922bb1a71708fa8dceb221009a72d1c0e66e72a5ff9c0dd361e87531"
+    },
+    {
+      "file": "flipbook/exporting.py",
+      "effective_lines": 186,
+      "sha256": "527390ecc8804173540568996254dd6e3f99775072f169e62d111f79c86777d3"
+    },
+    {
+      "file": "flipbook/geometry.py",
+      "effective_lines": 152,
+      "sha256": "ad556a5b1e312bf3c1fb4eaaf574c53730baee4a687cd6385816a82f5259d3e9"
+    },
+    {
+      "file": "flipbook/importing.py",
+      "effective_lines": 172,
+      "sha256": "b5c7fc66f0ebc904519dbc9f64932e0ec49fa78ee804cd90e471aca574ad84ff"
+    },
+    {
+      "file": "flipbook/jobs.py",
+      "effective_lines": 163,
+      "sha256": "50db1f7339ce897b9fa6277d5b162b563da363f9199593266d69972ed38b3eb9"
+    },
+    {
+      "file": "flipbook/layers.py",
+      "effective_lines": 185,
+      "sha256": "a3469998a36d33970b860ea597f7081d3e4a05bab3fc162140449abbc739c518"
+    },
+    {
+      "file": "flipbook/matting.py",
+      "effective_lines": 129,
+      "sha256": "c855689ed7aaa7a4e22e92762198dde5e27d3db239a14fa7156f41740f7ff884"
+    },
+    {
+      "file": "flipbook/model.py",
+      "effective_lines": 133,
+      "sha256": "dd8677a3c596c885fb72fc5a26fdcd2ab3bb04be23b211ab25a7fc77c1d785ad"
+    },
+    {
+      "file": "flipbook/multipage.py",
+      "effective_lines": 92,
+      "sha256": "0ddd583c391f18f147e00cb02d3aa5b57bc1b3cf88f670d2979aaa31cb5d0ff9"
+    },
+    {
+      "file": "flipbook/ninepatch.py",
+      "effective_lines": 99,
+      "sha256": "6be3328317433bdb0accdf7ec319fddbe5695420ee79ba44a627d2830e2bfdcf"
+    },
+    {
+      "file": "flipbook/palettes.py",
+      "effective_lines": 161,
+      "sha256": "1e66c68bb88c452d1ff0c832d43ba66e0cad0111ba8136f222f59fb76ef38d03"
+    },
+    {
+      "file": "flipbook/pipelines.py",
+      "effective_lines": 130,
+      "sha256": "ccf0a71c20af88e45cb00e905393afa017de178f644c1c9bf314e1d820d4b39e"
+    },
+    {
+      "file": "flipbook/pixels.py",
+      "effective_lines": 136,
+      "sha256": "aacf3942e20f9f2c4cbd25769d9f1d0ce17dc903f8e3c5c994b43ba11df2d1d5"
+    },
+    {
+      "file": "flipbook/presets.py",
+      "effective_lines": 108,
+      "sha256": "4f0d8b1714142bfd2bfeb5a2d034819f0480a524704bc51ba6208e3b40290483"
+    },
+    {
+      "file": "flipbook/recipes.py",
+      "effective_lines": 78,
+      "sha256": "89e0ab728225998550d7a904da4c3a9a63baf9234412cf1266f15b95756e35cd"
+    },
+    {
+      "file": "flipbook/reports.py",
+      "effective_lines": 57,
+      "sha256": "4dc492866a455962d4bdf34675bab270497af016e97f4c7fbc2669ec5e2a33ad"
+    },
+    {
+      "file": "flipbook/resampling.py",
+      "effective_lines": 114,
+      "sha256": "687009cfab52a32d9381b2dfddf5b2f182a55759699167e1aa3051124acc3e3b"
+    },
+    {
+      "file": "flipbook/sampling.py",
+      "effective_lines": 38,
+      "sha256": "27dac288054545ef9cf88c1e7b9e23d1d506d783d0c7fe75dbc5611b75e246bd"
+    },
+    {
+      "file": "flipbook/snapshots.py",
+      "effective_lines": 108,
+      "sha256": "625ec0a2aea595714b5237be255b02bd70ced0f3b7f198c6b73b5ce66000cf2b"
+    },
+    {
+      "file": "flipbook/store.py",
+      "effective_lines": 211,
+      "sha256": "dd95a84cd134cf1dfe7456e9d4d163492285fb77a27fe27f4c942ac069d57527"
+    },
+    {
+      "file": "flipbook/tilemaps.py",
+      "effective_lines": 172,
+      "sha256": "954339c8aaa2a717618294fbef5f49ad61a442625bf9ce924d1f0201a7a59ab1"
+    },
+    {
+      "file": "flipbook/timeline.py",
+      "effective_lines": 162,
+      "sha256": "7bce675527cf0dc5f88e907162482b13c7e64de4b42725874badc31066004932"
+    },
+    {
+      "file": "flipbook/tween.py",
+      "effective_lines": 179,
+      "sha256": "8532eaf6e9d7071ded49eb7a8843b5db8be897ed1adfd86e6ed45cb90f999ca7"
+    },
+    {
+      "file": "flipbook/validate.py",
+      "effective_lines": 180,
+      "sha256": "514538d70ad261d2156f5b9c523bcef2ef886dd3c45490bedd389cb808df9ecf"
+    }
+  ],
+  "total": 5051,
+  "passes_5000": true
+}
