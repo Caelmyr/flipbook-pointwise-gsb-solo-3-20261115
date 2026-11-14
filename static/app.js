@@ -301,3 +301,491 @@ async function openAtlasWorkspace(identifier){
   body.append(element('h3','另建图集工程'));
   body.append(form([text('name','工程名称','游戏图集'),num('width','图集宽',256,32,2048),num('height','图集高',256,32,2048),num('reserve','每侧原画预留像素',4,0,32),num('padding','图块间隔',1,0,16),num('extrude','边缘外扩',1,0,8),check('rotate','允许旋转')],'创建图集工程',async values=>{await mutate('建立图集工程…',endpoint('atlas-workspaces'),values);await openAtlasWorkspace(project().atlas_workspaces.at(-1).id)}));
 }
+
+// ---------- 立方体纹理绘制工作区 ----------
+const CUBE_KEYS=['px','nx','py','ny','pz','nz'];
+const CUBE_LABELS={px:'右面 +X',nx:'左面 −X',py:'顶面 +Y',ny:'底面 −Y',pz:'前面 +Z',nz:'后面 −Z'};
+const CUBE_FACES={
+  pz:{n:[0,0,1],u:[1,0,0],v:[0,-1,0],o:[-.5,.5,.5]},
+  nz:{n:[0,0,-1],u:[-1,0,0],v:[0,-1,0],o:[.5,.5,-.5]},
+  px:{n:[1,0,0],u:[0,0,-1],v:[0,-1,0],o:[.5,.5,.5]},
+  nx:{n:[-1,0,0],u:[0,0,1],v:[0,-1,0],o:[-.5,.5,-.5]},
+  py:{n:[0,1,0],u:[1,0,0],v:[0,0,1],o:[-.5,.5,-.5]},
+  ny:{n:[0,-1,0],u:[1,0,0],v:[0,0,-1],o:[-.5,-.5,.5]},
+};
+const CUBE_NET={py:[1,0],nx:[0,1],pz:[1,1],px:[2,1],nz:[3,1],ny:[1,2]};
+const CUBE_OPPOSITE={px:'nx',nx:'px',py:'ny',ny:'py',pz:'nz',nz:'pz'};
+const CUBE_AXES=['x','y','z'];
+const CUBE_EDGES=(()=>{const edges=[];for(let az=0;az<3;az++){const others=[0,1,2].filter(a=>a!==az);for(const s0 of[-.5,.5])for(const s1 of[-.5,.5]){const A=[0,0,0],B=[0,0,0];A[others[0]]=s0;A[others[1]]=s1;A[az]=-.5;B[others[0]]=s0;B[others[1]]=s1;B[az]=.5;edges.push({A,B,faces:[(s0>0?'p':'n')+CUBE_AXES[others[0]],(s1>0?'p':'n')+CUBE_AXES[others[1]]]})}}return edges})();
+const v3={
+  add:(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]],
+  sub:(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],
+  scale:(a,s)=>[a[0]*s,a[1]*s,a[2]*s],
+  dot:(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],
+  cross:(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],
+  norm(a){const l=Math.hypot(a[0],a[1],a[2])||1;return[a[0]/l,a[1]/l,a[2]/l]},
+  lerp:(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t],
+};
+const cubeUI={cube:null,tool:'pencil',yaw:.7,pitch:.55,dist:3.1,size:0,cell:120,textures:{},canvases:{},stroke:null,last:null,rotating:null,raf:0,view3d:null,net:null,cursor:null,netCursor:null,coord:null,undoBtn:null,redoBtn:null};
+function cubeCamera(){
+  const dir=[Math.cos(cubeUI.pitch)*Math.sin(cubeUI.yaw),Math.sin(cubeUI.pitch),Math.cos(cubeUI.pitch)*Math.cos(cubeUI.yaw)];
+  const eye=v3.scale(dir,cubeUI.dist);
+  const fwd=v3.norm(v3.scale(dir,-1));
+  let right=v3.cross(fwd,[0,1,0]);
+  right=Math.hypot(right[0],right[1],right[2])<1e-6?[1,0,0]:v3.norm(right);
+  const down=v3.norm(v3.cross(fwd,right));
+  return{eye,fwd,right,down};
+}
+function rayCube(eye,dir){
+  let tmin=-Infinity,tmax=Infinity,axis=0,sign=0;
+  for(let a=0;a<3;a++){
+    const o=eye[a],d=dir[a];
+    if(Math.abs(d)<1e-9){if(o<-.5||o>.5)return null;continue}
+    let t1=(-.5-o)/d,t2=(.5-o)/d,s=-1;
+    if(t1>t2){const t=t1;t1=t2;t2=t;s=1}
+    if(t1>tmin){tmin=t1;axis=a;sign=s}
+    if(t2<tmax)tmax=t2;
+    if(tmin>tmax)return null;
+  }
+  if(tmin<=1e-9)return null;
+  const point=v3.add(eye,v3.scale(dir,tmin));
+  return{face:(sign>0?'p':'n')+CUBE_AXES[axis],point,t:tmin};
+}
+function faceUV(face,point){
+  const F=CUBE_FACES[face],rel=v3.sub(point,F.o);
+  return[v3.dot(rel,F.u),v3.dot(rel,F.v)];
+}
+function facePoint(face,tx,ty){
+  const F=CUBE_FACES[face],S=cubeUI.size;
+  return v3.add(F.o,v3.add(v3.scale(F.u,tx/S),v3.scale(F.v,ty/S)));
+}
+function renderCubeView(){
+  const canvas=cubeUI.view3d;
+  if(!canvas||!cubeUI.size)return;
+  const w=canvas.width,h=canvas.height,ctx=canvas.getContext('2d');
+  const img=ctx.createImageData(w,h),out=img.data;
+  const cam=cubeCamera(),tan=Math.tan(.31),aspect=w/h,S=cubeUI.size;
+  const light=v3.norm([.45,.75,.6]);
+  for(let y=0;y<h;y++){
+    const sy=(1-2*(y+.5)/h)*tan;
+    for(let x=0;x<w;x++){
+      const sx=(2*(x+.5)/w-1)*aspect*tan;
+      const dir=v3.norm(v3.add(cam.fwd,v3.add(v3.scale(cam.right,sx),v3.scale(cam.down,-sy))));
+      const hit=rayCube(cam.eye,dir),o=(y*w+x)*4;
+      if(!hit){out[o+3]=0;continue}
+      const F=CUBE_FACES[hit.face],[a,b]=faceUV(hit.face,hit.point);
+      const i=Math.min(S-1,Math.max(0,Math.floor(a*S))),j=Math.min(S-1,Math.max(0,Math.floor(b*S)));
+      const tex=cubeUI.textures[hit.face].data,p=(j*S+i)*4;
+      const shade=.56+.44*Math.max(0,v3.dot(F.n,light));
+      const sa=tex[p+3]/255,check=((Math.floor(x/10)+Math.floor(y/10))%2)?40:56;
+      out[o]=Math.round((tex[p]*sa+check*(1-sa))*shade);
+      out[o+1]=Math.round((tex[p+1]*sa+(check+6)*(1-sa))*shade);
+      out[o+2]=Math.round((tex[p+2]*sa+(check+12)*(1-sa))*shade);
+      out[o+3]=255;
+    }
+  }
+  ctx.putImageData(img,0,0);
+  ctx.lineWidth=1;
+  for(const edge of CUBE_EDGES){
+    if(!edge.faces.some(key=>v3.dot(CUBE_FACES[key].n,cam.fwd)<0))continue;
+    const a=cubeProject(edge.A,cam,w,h),b=cubeProject(edge.B,cam,w,h);
+    if(!a||!b)continue;
+    ctx.strokeStyle='rgba(190,240,255,.28)';ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
+    ctx.strokeStyle='rgba(8,18,26,.75)';ctx.beginPath();ctx.moveTo(a[0]+.6,a[1]+.6);ctx.lineTo(b[0]+.6,b[1]+.6);ctx.stroke();
+  }
+}
+function cubeProject(P,cam,w,h){
+  const rel=v3.sub(P,cam.eye),z=v3.dot(rel,cam.fwd);
+  if(z<.05)return null;
+  const tan=Math.tan(.31),aspect=w/h;
+  return[w*(1+v3.dot(rel,cam.right)/(z*tan*aspect))/2,h*(1+v3.dot(rel,cam.down)/(z*tan))/2];
+}
+function renderNetView(){
+  const canvas=cubeUI.net;
+  if(!canvas||!cubeUI.size)return;
+  const ctx=canvas.getContext('2d'),cell=cubeUI.cell,gap=2;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.imageSmoothingEnabled=false;
+  for(const key of CUBE_KEYS){
+    const[cx,cy]=CUBE_NET[key],x=gap+cx*(cell+gap),y=gap+cy*(cell+gap);
+    ctx.drawImage(cubeUI.canvases[key],x,y,cell,cell);
+    ctx.strokeStyle='#42586a';ctx.strokeRect(x-.5,y-.5,cell+1,cell+1);
+    ctx.font='10px sans-serif';ctx.lineWidth=3;ctx.strokeStyle='rgba(10,20,28,.9)';
+    ctx.strokeText(CUBE_LABELS[key],x+4,y+13);ctx.fillStyle='#a9e6cd';ctx.fillText(CUBE_LABELS[key],x+4,y+13);
+  }
+}
+function scheduleCubeRender(){
+  if(cubeUI.raf)return;
+  cubeUI.raf=requestAnimationFrame(()=>{cubeUI.raf=0;renderCubeView();renderNetView()});
+}
+function syncFaceCanvas(key){
+  cubeUI.canvases[key].getContext('2d').putImageData(cubeUI.textures[key],0,0);
+}
+function loadImage(src){
+  return new Promise((resolve,reject)=>{const image=new Image();image.onload=()=>resolve(image);image.onerror=()=>reject(Error('面部纹理加载失败'));image.src=src});
+}
+async function reloadCubeTextures(){
+  const p=project(),cube=cubeUI.cube;
+  if(!cube)return;
+  cubeUI.size=p.width;
+  for(const key of CUBE_KEYS){
+    const image=await loadImage(endpoint(`frames/${cube.faces[key].frame}/image`)+`?rev=${p.revision}`);
+    const canvas=cubeUI.canvases[key]||(cubeUI.canvases[key]=document.createElement('canvas'));
+    canvas.width=canvas.height=p.width;
+    const ctx=canvas.getContext('2d',{willReadFrequently:true});
+    ctx.clearRect(0,0,p.width,p.width);
+    ctx.drawImage(image,0,0);
+    cubeUI.textures[key]=ctx.getImageData(0,0,p.width,p.width);
+  }
+  if(cubeUI.undoBtn)cubeUI.undoBtn.disabled=!p.undo.length;
+  if(cubeUI.redoBtn)cubeUI.redoBtn.disabled=!p.redo.length;
+  scheduleCubeRender();
+}
+function paintTexel(key,i,j){
+  const stroke=cubeUI.stroke,S=cubeUI.size,idx=j*S+i;
+  if(stroke.masks[key][idx])return;
+  stroke.masks[key][idx]=1;
+  const data=cubeUI.textures[key].data,o=idx*4;
+  if(stroke.tool==='erase'){data[o]=data[o+1]=data[o+2]=data[o+3]=0;stroke.dirty.add(key);return}
+  const[r,g,b,a]=stroke.rgba,sa=a/255,da=data[o+3]/255,oa=sa+da*(1-sa);
+  if(oa>0){
+    data[o]=Math.round((r*sa+data[o]*da*(1-sa))/oa);
+    data[o+1]=Math.round((g*sa+data[o+1]*da*(1-sa))/oa);
+    data[o+2]=Math.round((b*sa+data[o+2]*da*(1-sa))/oa);
+  }
+  data[o+3]=Math.round(oa*255);
+  stroke.dirty.add(key);
+}
+function cubeStamp(P){
+  const stroke=cubeUI.stroke,S=cubeUI.size,rr=stroke.radiusTex;
+  for(const key of CUBE_KEYS){
+    const F=CUBE_FACES[key],rel=v3.sub(P,F.o);
+    const sa=v3.dot(rel,F.u)*S,sb=v3.dot(rel,F.v)*S,sc=v3.dot(rel,F.n)*S;
+    if(sc*sc>=rr*rr)continue;
+    const reach=Math.sqrt(rr*rr-sc*sc);
+    const i0=Math.max(0,Math.floor(sa-reach)),i1=Math.min(S-1,Math.ceil(sa+reach));
+    const j0=Math.max(0,Math.floor(sb-reach)),j1=Math.min(S-1,Math.ceil(sb+reach));
+    for(let j=j0;j<=j1;j++){
+      const dy=sb<j?j-sb:sb>j+1?sb-(j+1):0;
+      for(let i=i0;i<=i1;i++){
+        const dx=sa<i?i-sa:sa>i+1?sa-(i+1):0;
+        if(dx*dx+dy*dy+sc*sc<rr*rr)paintTexel(key,i,j);
+      }
+    }
+  }
+}
+function cubeSegment(A,B){
+  const dist=Math.hypot(B[0]-A[0],B[1]-A[1],B[2]-A[2]);
+  const steps=Math.max(1,Math.ceil(dist/cubeUI.stroke.spacing));
+  for(let k=1;k<=steps;k++)cubeStamp(v3.lerp(A,B,k/steps));
+}
+function rotateAround(vec,axis,angle){
+  const c=Math.cos(angle),s=Math.sin(angle),k=v3.cross(axis,vec),d=v3.dot(axis,vec)*(1-c);
+  return[vec[0]*c+k[0]*s+axis[0]*d,vec[1]*c+k[1]*s+axis[1]*d,vec[2]*c+k[2]*s+axis[2]*d];
+}
+function edgeCrossing(from,to){
+  const A=CUBE_FACES[from.face],B=CUBE_FACES[to.face];
+  if(CUBE_OPPOSITE[from.face]===to.face)return null;
+  const D=v3.norm(v3.cross(A.n,B.n));
+  if(Math.hypot(D[0],D[1],D[2])<1e-6)return null;
+  const C=v3.scale(v3.add(A.n,B.n),.5);
+  const sign=v3.dot(v3.cross(D,B.n),A.n)>=0?1:-1;
+  const unfolded=v3.add(rotateAround(v3.sub(to.point,C),D,sign*Math.PI/2),C);
+  const denom=v3.dot(v3.sub(unfolded,from.point),B.n);
+  if(Math.abs(denom)<1e-9)return null;
+  const s=v3.dot(v3.sub(C,from.point),B.n)/denom;
+  if(s<-1e-6||s>1+1e-6)return null;
+  const E=v3.lerp(from.point,unfolded,Math.min(1,Math.max(0,s)));
+  if(Math.abs(v3.dot(v3.sub(E,C),D))>.5+1e-6)return null;
+  return E;
+}
+function cubeStrokeTo(from,to){
+  if(from.face===to.face){cubeSegment(from.point,to.point);return}
+  const edge=edgeCrossing(from,to);
+  if(!edge){cubeStamp(to.point);return}
+  cubeSegment(from.point,edge);
+  cubeSegment(edge,to.point);
+}
+function flushCubeStroke(){
+  const stroke=cubeUI.stroke;
+  if(!stroke)return;
+  for(const key of stroke.dirty)syncFaceCanvas(key);
+  stroke.dirty.clear();
+  scheduleCubeRender();
+}
+function beginCubeStroke(hit){
+  const S=cubeUI.size,size=Math.max(1,Math.min(128,Number($('cubeSize').value)||1));
+  const radiusTex=Math.min(size/2,S*.999);
+  const alpha=Math.max(0,Math.min(255,Number($('cubeAlpha').value)||0));
+  const hex=$('cubeColor').value;
+  cubeUI.stroke={
+    tool:cubeUI.tool==='erase'?'erase':'pencil',
+    hex:hex+alpha.toString(16).padStart(2,'0'),
+    rgba:[parseInt(hex.slice(1,3),16),parseInt(hex.slice(3,5),16),parseInt(hex.slice(5,7),16),alpha],
+    radiusTex,
+    spacing:Math.max(.5,radiusTex*.5)/S,
+    masks:Object.fromEntries(CUBE_KEYS.map(key=>[key,new Uint8Array(S*S)])),
+    dirty:new Set(),
+  };
+  cubeStamp(hit.point);
+  cubeUI.last=hit;
+  flushCubeStroke();
+}
+function maskToRuns(mask,S){
+  const runs=[];
+  for(let y=0;y<S;y++){
+    let x=0;
+    while(x<S){
+      if(mask[y*S+x]){
+        let x1=x;
+        while(x1+1<S&&mask[y*S+x1+1])x1++;
+        runs.push([y,x,x1]);
+        x=x1+1;
+      }else x++;
+    }
+  }
+  return runs;
+}
+async function submitCubeStroke(){
+  const stroke=cubeUI.stroke;
+  cubeUI.stroke=null;
+  cubeUI.last=null;
+  if(!stroke)return;
+  const chunks=[];
+  for(const key of CUBE_KEYS){
+    const runs=maskToRuns(stroke.masks[key],cubeUI.size);
+    for(let at=0;at<runs.length;at+=4000){
+      const part=Math.floor(at/4000);
+      while(chunks.length<=part)chunks.push({});
+      chunks[part][key]={tool:stroke.tool,color:stroke.hex,runs:runs.slice(at,at+4000)};
+    }
+  }
+  if(!chunks.length){scheduleCubeRender();return}
+  try{
+    for(const faces of chunks)await mutate('保存立方体笔画…',endpoint(`cubes/${cubeUI.cube.id}/paint`),{faces});
+    status('立方体笔画已保存 · 一笔可整体撤销');
+  }finally{
+    await reloadCubeTextures();
+  }
+}
+function pickCube(e){
+  const canvas=cubeUI.view3d,rect=canvas.getBoundingClientRect();
+  const x=(e.clientX-rect.left)/rect.width*canvas.width,y=(e.clientY-rect.top)/rect.height*canvas.height;
+  const cam=cubeCamera(),tan=Math.tan(.31),aspect=canvas.width/canvas.height;
+  const sx=(2*x/canvas.width-1)*aspect*tan,sy=(1-2*y/canvas.height)*tan;
+  const dir=v3.norm(v3.add(cam.fwd,v3.add(v3.scale(cam.right,sx),v3.scale(cam.down,-sy))));
+  return rayCube(cam.eye,dir);
+}
+function pickNet(e){
+  const canvas=cubeUI.net,rect=canvas.getBoundingClientRect();
+  const x=(e.clientX-rect.left)/rect.width*canvas.width,y=(e.clientY-rect.top)/rect.height*canvas.height;
+  const cell=cubeUI.cell,gap=2,S=cubeUI.size;
+  for(const key of CUBE_KEYS){
+    const[cx,cy]=CUBE_NET[key],ox=gap+cx*(cell+gap),oy=gap+cy*(cell+gap);
+    if(x>=ox&&x<ox+cell&&y>=oy&&y<oy+cell){
+      const tx=(x-ox)/cell*S,ty=(y-oy)/cell*S;
+      return{face:key,point:facePoint(key,tx,ty),tex:[tx,ty]};
+    }
+  }
+  return null;
+}
+function cubeHoverText(hit){
+  if(!hit)return'—';
+  const[a,b]=faceUV(hit.face,hit.point),S=cubeUI.size;
+  const i=Math.min(S-1,Math.max(0,Math.floor(a*S))),j=Math.min(S-1,Math.max(0,Math.floor(b*S)));
+  return`${CUBE_LABELS[hit.face]} · 像素 ${i}, ${j}`;
+}
+function moveCubeCursor(cursor,e,hit,radius){
+  if(!hit||cubeUI.tool==='rotate'){cursor.style.display='none';return}
+  const stage=cursor.parentElement,rect=stage.getBoundingClientRect();
+  cursor.style.display='block';
+  cursor.style.width=cursor.style.height=Math.max(2,radius*2)+'px';
+  cursor.style.left=(e.clientX-rect.left)+'px';
+  cursor.style.top=(e.clientY-rect.top)+'px';
+}
+function cubeBrushRadius3d(){
+  const size=Math.max(1,Math.min(128,Number($('cubeSize').value)||1));
+  return Math.min(size/2,cubeUI.size*.999)/cubeUI.size;
+}
+function bindCubeCanvas(canvas,isNet){
+  canvas.oncontextmenu=e=>e.preventDefault();
+  canvas.onpointerdown=e=>{
+    if(S.busy||!cubeUI.size)return;
+    if(e.button===1||e.button===2||cubeUI.tool==='rotate'){
+      cubeUI.rotating={x:e.clientX,y:e.clientY};
+      canvas.setPointerCapture(e.pointerId);
+      return;
+    }
+    if(e.button!==0||cubeUI.stroke)return;
+    const hit=isNet?pickNet(e):pickCube(e);
+    if(!hit)return;
+    beginCubeStroke(hit);
+    canvas.setPointerCapture(e.pointerId);
+  };
+  canvas.onpointermove=e=>{
+    const hit=cubeUI.size?(isNet?pickNet(e):pickCube(e)):null;
+    if(cubeUI.coord)cubeUI.coord.textContent=cubeHoverText(hit);
+    if(!isNet&&cubeUI.cursor){
+      const radius=hit?cubeBrushRadius3d()*canvas.getBoundingClientRect().height/(2*Math.tan(.31)*Math.max(.2,v3.dot(v3.sub(hit.point,cubeCamera().eye),cubeCamera().fwd))):0;
+      moveCubeCursor(cubeUI.cursor,e,hit,radius);
+    }
+    if(isNet&&cubeUI.netCursor)moveCubeCursor(cubeUI.netCursor,e,hit,cubeBrushRadius3d()*cubeUI.cell);
+    if(cubeUI.rotating){
+      cubeUI.yaw+=(e.clientX-cubeUI.rotating.x)*.009;
+      cubeUI.pitch=Math.max(-1.45,Math.min(1.45,cubeUI.pitch+(e.clientY-cubeUI.rotating.y)*.009));
+      cubeUI.rotating={x:e.clientX,y:e.clientY};
+      scheduleCubeRender();
+      return;
+    }
+    if(!cubeUI.stroke)return;
+    if(!hit){cubeUI.last=null;return}
+    if(cubeUI.last)cubeStrokeTo(cubeUI.last,hit);else cubeStamp(hit.point);
+    cubeUI.last=hit;
+    flushCubeStroke();
+  };
+  const finish=guard(async()=>{
+    if(cubeUI.rotating){cubeUI.rotating=null;return}
+    if(cubeUI.stroke)await submitCubeStroke();
+  });
+  canvas.onpointerup=finish;
+  canvas.onpointercancel=finish;
+  canvas.onpointerleave=()=>{if(cubeUI.coord)cubeUI.coord.textContent='—';const cursor=isNet?cubeUI.netCursor:cubeUI.cursor;if(cursor)cursor.style.display='none'};
+}
+function cubeMappingFields(container,selected){
+  const p=project(),rows={};
+  for(const key of CUBE_KEYS){
+    const row=element('div',undefined,'cube-face-row');
+    row.append(element('span',CUBE_LABELS[key],'cube-face-name'));
+    const frameSel=element('select'),layerSel=element('select');
+    frameSel.setAttribute('aria-label',CUBE_LABELS[key]+'帧');
+    layerSel.setAttribute('aria-label',CUBE_LABELS[key]+'绘制层');
+    for(const f of p.frames)frameSel.append(new Option(f.name,f.id));
+    const wanted=selected?.[key];
+    frameSel.value=wanted?.frame||p.frames[Math.min(CUBE_KEYS.indexOf(key),p.frames.length-1)].id;
+    function fillLayers(){
+      const frame=p.frames.find(f=>f.id===frameSel.value);
+      layerSel.replaceChildren();
+      for(const layer of flatLayerNodes(frame.layers))if(layer.kind!=='group')layerSel.append(new Option(layer.name,layer.id));
+      const keep=wanted&&frame.id===wanted.frame?wanted.layer:null;
+      layerSel.value=keep&&[...layerSel.options].some(o=>o.value===keep)?keep:frame.layers.at(-1).id;
+    }
+    frameSel.onchange=fillLayers;
+    fillLayers();
+    row.append(frameSel,layerSel);
+    container.append(row);
+    rows[key]={frameSel,layerSel};
+  }
+  return()=>Object.fromEntries(CUBE_KEYS.map(key=>[key,{frame:rows[key].frameSel.value,layer:rows[key].layerSel.value}]));
+}
+function cubeMappingSummary(cube){
+  const p=project();
+  return CUBE_KEYS.map(key=>{
+    const face=cube.faces[key];
+    const frame=p.frames.find(f=>f.id===face.frame);
+    const layer=frame?flatLayerNodes(frame.layers).find(l=>l.id===face.layer):null;
+    const top=frame?frame.layers.at(-1):null;
+    let target=layer?layer.name:top?top.name+'（回退最上层）':'—';
+    if(layer&&top&&layer.id!==top.id)target+='（非最上层，笔画可能被上层遮挡）';
+    return{'面':CUBE_LABELS[key],'对应帧':frame?frame.name:'（缺失）','目标绘制层':target};
+  });
+}
+function openCubeCreate(body){
+  const p=project();
+  body.append(element('p','把六张正方形帧分别指定为立方体的六个面，随后在立体视图或展开图上直接绘制；笔迹跨过边和角会正确延续到相邻面，像素始终写回对应帧。','hint'));
+  if(p.frames.length<6){
+    body.append(element('p',`当前只有 ${p.frames.length} 帧，立方体需要六张不同的帧分别对应六个面。`,'muted'));
+    const add=element('button','补齐空白帧至六张','primary');
+    add.onclick=guard(async()=>{await mutate('添加空白帧…',endpoint('frames'),{count:6-project().frames.length});await openCubeWorkspace()});
+    body.append(add);
+    return;
+  }
+  const container=element('div');
+  const collect=cubeMappingFields(container,null);
+  const nameField=field(text('name','工作区名称','纸盒纹理'));
+  const create=element('button','创建立方体工作区','primary');
+  create.onclick=guard(async()=>{
+    await mutate('创建立方体工作区…',endpoint('cubes'),{name:nameField.querySelector('input').value,faces:collect()});
+    await openCubeWorkspace();
+  });
+  body.append(nameField,container,create);
+}
+async function openCubeWorkspace(cubeId=null){
+  const p=project();
+  const body=dialog('立方体纹理绘制工作区');
+  cubeUI.stroke=null;cubeUI.last=null;cubeUI.rotating=null;cubeUI.view3d=null;cubeUI.net=null;
+  if(p.width!==p.height){
+    body.append(element('p',`立方体纹理需要正方形画布（当前 ${p.width}×${p.height}）。请先在“动画工具箱 → 画布”中调整为正方形。`,'hint'));
+    return;
+  }
+  const cubes=p.cubes||[];
+  if(!cubes.length){openCubeCreate(body);return}
+  const cube=cubes.find(c=>c.id===cubeId)||cubes[0];
+  cubeUI.cube=cube;
+  const bar=element('div',undefined,'cube-toolbar');
+  if(cubes.length>1){
+    const sel=element('select');sel.setAttribute('aria-label','立方体工作区');
+    for(const item of cubes)sel.append(new Option(item.name,item.id));
+    sel.value=cube.id;sel.onchange=guard(()=>openCubeWorkspace(sel.value));
+    bar.append(sel);
+  }
+  const toolSel=element('select');toolSel.setAttribute('aria-label','绘制工具');
+  for(const[key,label]of[['pencil','铅笔'],['erase','橡皮'],['rotate','旋转视角']])toolSel.append(new Option(label,key));
+  toolSel.value=cubeUI.tool;toolSel.onchange=()=>{cubeUI.tool=toolSel.value};
+  bar.append(element('span','工具','cube-label'),toolSel);
+  const color=element('input');color.type='color';color.id='cubeColor';color.value=$('color').value;
+  const alpha=element('input');alpha.type='number';alpha.id='cubeAlpha';alpha.min=0;alpha.max=255;alpha.value=255;
+  const size=element('input');size.type='number';size.id='cubeSize';size.min=1;size.max=128;size.value=$('brushSize').value;
+  size.onchange=()=>{if(cubeUI.size)scheduleCubeRender()};
+  bar.append(element('span','颜色','cube-label'),color,element('span','覆盖度','cube-label'),alpha,element('span','笔刷','cube-label'),size);
+  const undoB=element('button','↶ 撤销一笔'),redoB=element('button','↷ 重做');
+  undoB.onclick=guard(async()=>{await mutate('撤销立方体笔画…',endpoint('undo'));await reloadCubeTextures()});
+  redoB.onclick=guard(async()=>{await mutate('重做立方体笔画…',endpoint('redo'));await reloadCubeTextures()});
+  cubeUI.undoBtn=undoB;cubeUI.redoBtn=redoB;
+  bar.append(undoB,redoB);
+  const layout=element('div',undefined,'cube-layout');
+  const left=element('div'),right=element('div');
+  const stage=element('div',undefined,'cube-stage');
+  const view3d=element('canvas','cube-3d');view3d.width=480;view3d.height=480;
+  const cursor=element('div',undefined,'cube-cursor');cursor.style.display='none';
+  stage.append(view3d,cursor);
+  const reset=element('button','复位视角');
+  reset.onclick=()=>{cubeUI.yaw=.7;cubeUI.pitch=.55;cubeUI.dist=3.1;scheduleCubeRender()};
+  left.append(stage,element('p','左键在可见表面绘制或擦除；右键拖动（或选择“旋转视角”后左键拖动）旋转盒子，滚轮缩放。转动视角不会改动已落笔的像素。','hint'),reset);
+  const netWrap=element('div',undefined,'cube-net-wrap');
+  const net=element('canvas','cube-net');
+  net.width=4*cubeUI.cell+5*2;net.height=3*cubeUI.cell+4*2;
+  const netCursor=element('div',undefined,'cube-cursor');netCursor.style.display='none';
+  netWrap.append(net,netCursor);
+  const coord=element('p','—','muted');
+  right.append(netWrap,coord);
+  layout.append(left,right);
+  const actions=element('div',undefined,'inline-actions');
+  const download=element('a','↓ 下载六个面 ZIP');
+  download.href=endpoint(`cubes/${cube.id}/download`);download.download='cube-textures.zip';
+  const remap=element('button','面映射 / 重命名');
+  remap.onclick=guard(async()=>{
+    const mappingBody=dialog('立方体面映射与命名');
+    mappingBody.append(element('p','调整六个面对应的帧与目标绘制层；只改变映射，不改动已绘制的像素。','hint'));
+    const container=element('div');
+    const collect=cubeMappingFields(container,cube.faces);
+    const nameField=field(text('name','工作区名称',cube.name));
+    const save=element('button','保存映射','primary');
+    save.onclick=guard(async()=>{await mutate('保存立方体映射…',endpoint(`cubes/${cube.id}/update`),{name:nameField.querySelector('input').value,faces:collect()});await openCubeWorkspace(cube.id)});
+    mappingBody.append(nameField,container,save);
+  });
+  const add=element('button','＋ 新立方体工作区');
+  add.onclick=()=>openCubeCreate(dialog('新立方体工作区'));
+  const remove=element('button','移除工作区');
+  remove.onclick=guard(async()=>{await mutate('移除立方体工作区…',endpoint(`cubes/${cube.id}`),{},'DELETE');await openCubeWorkspace()});
+  actions.append(download,remap,add,remove);
+  const summary=element('details');
+  summary.append(element('summary','六个面映射（帧 / 目标绘制层）'));
+  renderData(cubeMappingSummary(cube),summary);
+  body.append(bar,layout,actions,summary);
+  cubeUI.view3d=view3d;cubeUI.net=net;cubeUI.cursor=cursor;cubeUI.netCursor=netCursor;cubeUI.coord=coord;
+  bindCubeCanvas(view3d,false);
+  bindCubeCanvas(net,true);
+  view3d.addEventListener('wheel',e=>{e.preventDefault();cubeUI.dist=Math.max(1.5,Math.min(9,cubeUI.dist*(1+e.deltaY*.001)));scheduleCubeRender()},{passive:false});
+  await reloadCubeTextures();
+}
+$('cubeTool').onclick=guard(()=>openCubeWorkspace());

@@ -370,6 +370,157 @@ class Workflows(unittest.TestCase):
         finally:
             another.extensions['jobs'].executor.shutdown(wait=True)
 
+    def six_frame_project(self, size=32):
+        project = self.new(size, size)
+        return self.mutate(project, 'frames', {'count': 5})
+
+    def cube_faces(self, project):
+        return {key: {'frame': project['frames'][index]['id']} for index, key in enumerate(['px', 'nx', 'py', 'ny', 'pz', 'nz'])}
+
+    def create_cube(self, project, faces=None):
+        return self.call('POST', self.base(project) + '/cubes', {'revision': project['revision'], 'name': '纸盒', 'faces': faces or self.cube_faces(project)}, 201)
+
+    def test_cube_create_validation(self):
+        project = self.new(32, 32)
+        same = {key: {'frame': project['frames'][0]['id']} for key in ['px', 'nx', 'py', 'ny', 'pz', 'nz']}
+        response = self.client.post(self.base(project) + '/cubes', json={'revision': project['revision'], 'faces': same})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('六张', response.json['error'])
+        project = self.six_frame_project()
+        faces = self.cube_faces(project)
+        faces['nz'] = faces['pz']
+        response = self.client.post(self.base(project) + '/cubes', json={'revision': project['revision'], 'faces': faces})
+        self.assertEqual(response.status_code, 400)
+        wide = self.call('POST', '/api/projects', {'name': '宽画布', 'width': 32, 'height': 16}, 201)
+        wide = self.mutate(wide, 'frames', {'count': 5})
+        response = self.client.post(self.base(wide) + '/cubes', json={'revision': wide['revision'], 'faces': self.cube_faces(wide)})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('正方形', response.json['error'])
+        project = self.create_cube(project)
+        self.assertEqual(len(project['cubes']), 1)
+        cube = project['cubes'][0]
+        for key, frame in zip(['px', 'nx', 'py', 'ny', 'pz', 'nz'], project['frames']):
+            self.assertEqual(cube['faces'][key]['frame'], frame['id'])
+            self.assertEqual(cube['faces'][key]['layer'], frame['layers'][-1]['id'])
+
+    def test_cube_paint_single_undo_and_sync(self):
+        project = self.create_cube(self.six_frame_project())
+        cube = project['cubes'][0]
+        before = {key: np.asarray(self.image(project, index)).copy() for index, key in enumerate(['px', 'nx', 'py', 'ny', 'pz', 'nz'])}
+        stroke = {
+            'pz': {'tool': 'pencil', 'color': '#ff0000ff', 'runs': [[3, 4, 9], [4, 4, 9]]},
+            'px': {'tool': 'pencil', 'color': '#ff0000ff', 'runs': [[3, 0, 2]]},
+        }
+        project = self.mutate(project, f"cubes/{cube['id']}/paint", {'faces': stroke})
+        front = self.image(project, 4)
+        right = self.image(project, 0)
+        self.assertEqual(front.getpixel((6, 3)), (255, 0, 0, 255))
+        self.assertEqual(front.getpixel((9, 4)), (255, 0, 0, 255))
+        self.assertEqual(right.getpixel((1, 3)), (255, 0, 0, 255))
+        self.assertEqual(len(project['undo']), 3)
+        project = self.mutate(project, 'undo')
+        for index, key in enumerate(['px', 'nx', 'py', 'ny', 'pz', 'nz']):
+            np.testing.assert_array_equal(np.asarray(self.image(project, index)), before[key])
+        project = self.mutate(project, 'redo')
+        self.assertEqual(self.image(project, 4).getpixel((6, 3)), (255, 0, 0, 255))
+        self.assertEqual(self.image(project, 0).getpixel((1, 3)), (255, 0, 0, 255))
+
+    def test_cube_erase_and_partial_alpha(self):
+        project = self.create_cube(self.six_frame_project())
+        cube = project['cubes'][0]
+        frame = project['frames'][4]
+        layer = frame['layers'][0]['id']
+        project = self.mutate(project, f"frames/{frame['id']}/layers/{layer}/draw", {'tool': 'rectangle', 'color': '#00ff00ff', 'points': [[2, 2], [10, 10]], 'filled': True})
+        project = self.mutate(project, f"cubes/{cube['id']}/paint", {'faces': {'pz': {'tool': 'erase', 'runs': [[5, 4, 6]]}}})
+        self.assertEqual(self.image(project, 4).getpixel((5, 5))[3], 0)
+        self.assertEqual(self.image(project, 4).getpixel((8, 8)), (0, 255, 0, 255))
+        project = self.mutate(project, f"cubes/{cube['id']}/paint", {'faces': {'pz': {'tool': 'pencil', 'color': '#0000ff80', 'runs': [[8, 8, 8]]}}})
+        r, g, b, a = self.image(project, 4).getpixel((8, 8))
+        self.assertEqual(a, 255)
+        self.assertAlmostEqual(b, 128, delta=2)
+
+    def test_cube_paint_rejections_keep_revision(self):
+        project = self.create_cube(self.six_frame_project())
+        cube = project['cubes'][0]
+        frame = project['frames'][4]
+        layer = frame['layers'][0]['id']
+        project = self.mutate(project, f"frames/{frame['id']}/layers/{layer}", {'locked': True}, 'PATCH')
+        response = self.client.post(self.base(project) + f"/cubes/{cube['id']}/paint", json={'revision': project['revision'], 'faces': {'pz': {'tool': 'pencil', 'runs': [[1, 1, 2]]}}})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('锁定', response.json['error'])
+        self.assertEqual(self.store.get(project['id'])['revision'], project['revision'])
+        project = self.mutate(project, f"frames/{frame['id']}/layers/{layer}", {'locked': False}, 'PATCH')
+        for payload in [
+            {'pz': {'tool': 'pencil', 'runs': [[32, 1, 2]]}},
+            {'pz': {'tool': 'pencil', 'runs': [[1, 1]]}},
+            {'front': {'tool': 'pencil', 'runs': [[1, 1, 2]]}},
+            {'pz': {'tool': 'spray', 'runs': [[1, 1, 2]]}},
+        ]:
+            response = self.client.post(self.base(project) + f"/cubes/{cube['id']}/paint", json={'revision': project['revision'], 'faces': payload})
+            self.assertEqual(response.status_code, 400, payload)
+        self.assertEqual(self.store.get(project['id'])['revision'], project['revision'])
+
+    def test_cube_frame_deletion_blocked_and_remap(self):
+        project = self.six_frame_project()
+        project = self.mutate(project, 'frames', {'count': 1})
+        self.assertEqual(len(project['frames']), 7)
+        project = self.create_cube(project)
+        cube = project['cubes'][0]
+        doomed = project['frames'][2]['id']
+        response = self.client.post(self.base(project) + '/frames/remove', json={'revision': project['revision'], 'frame_ids': [doomed]})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('立方体', response.json['error'])
+        self.assertEqual(len(self.store.get(project['id'])['frames']), 7)
+        faces = self.cube_faces(project)
+        faces['py'] = {'frame': project['frames'][6]['id'], 'layer': project['frames'][6]['layers'][-1]['id']}
+        project = self.mutate(project, f"cubes/{cube['id']}/update", {'faces': faces, 'name': '重映射'})
+        self.assertEqual(project['cubes'][0]['name'], '重映射')
+        self.assertEqual(project['cubes'][0]['faces']['py']['frame'], project['frames'][6]['id'])
+        project = self.mutate(project, 'frames/remove', {'frame_ids': [doomed]})
+        self.assertEqual(len(project['frames']), 6)
+        self.assertEqual(len(project['cubes']), 1)
+
+    def test_cube_download_bundle(self):
+        project = self.create_cube(self.six_frame_project())
+        cube = project['cubes'][0]
+        project = self.mutate(project, f"cubes/{cube['id']}/paint", {'faces': {'py': {'tool': 'pencil', 'color': '#ff00ffff', 'runs': [[0, 0, 3]]}}})
+        data = self.call('GET', self.base(project) + f"/cubes/{cube['id']}/download")
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = archive.namelist()
+            for key in ['px', 'nx', 'py', 'ny', 'pz', 'nz']:
+                self.assertIn(f'faces/{key}.png', names)
+            self.assertIn('net.png', names)
+            metadata = json.loads(archive.read('cube.json'))
+            self.assertEqual(metadata['size'], 32)
+            with Image.open(io.BytesIO(archive.read('faces/py.png'))) as image:
+                self.assertEqual(image.size, (32, 32))
+                self.assertEqual(image.convert('RGBA').getpixel((1, 0)), (255, 0, 255, 255))
+            with Image.open(io.BytesIO(archive.read('net.png'))) as net:
+                self.assertEqual(net.width, 4 * 32 + 5)
+                self.assertEqual(net.height, 3 * 32 + 4)
+
+    def test_cube_persistence_and_remove(self):
+        project = self.create_cube(self.six_frame_project())
+        cube = project['cubes'][0]
+        project = self.mutate(project, f"cubes/{cube['id']}/paint", {'faces': {'nx': {'tool': 'pencil', 'color': '#ffffffff', 'runs': [[7, 7, 7]]}}})
+        another = create_app(self.temp.name)
+        try:
+            client = another.test_client()
+            response = client.get(self.base(project))
+            self.assertEqual(response.status_code, 200)
+            loaded = response.json
+            self.assertEqual(len(loaded['cubes']), 1)
+            self.assertEqual(loaded['cubes'][0]['id'], cube['id'])
+            response = client.post(self.base(loaded) + f"/cubes/{cube['id']}/paint", json={'revision': loaded['revision'], 'faces': {'nx': {'tool': 'pencil', 'color': '#ffffffff', 'runs': [[8, 8, 8]]}}})
+            self.assertEqual(response.status_code, 200)
+            image = render_frame(another.extensions['store'], response.json, response.json['frames'][1]['id'])
+            self.assertEqual(image.getpixel((8, 8)), (255, 255, 255, 255))
+            response = client.delete(self.base(project) + f"/cubes/{cube['id']}", json={'revision': response.json['revision']})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json['cubes'], [])
+        finally:
+            another.extensions['jobs'].executor.shutdown(wait=True)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

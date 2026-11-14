@@ -86,6 +86,8 @@ def validate_document(project):
                     raise v.Invalid('当前不支持对角翻转标记')
                 if raw & 0x1FFFFFFF > len(tiles):
                     raise v.Invalid('瓦片编号超出集合')
+    from .cube import validate_cubes
+    validate_cubes(project)
     return project
 
 

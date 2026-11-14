@@ -6,6 +6,13 @@ test_archive_rejects_traversal_and_missing_assets (test_workflows.Workflows.test
 test_atlas_pixel_roundtrip_and_no_overlaps (test_workflows.Workflows.test_atlas_pixel_roundtrip_and_no_overlaps) ... ok
 test_auto_sprite_slice (test_workflows.Workflows.test_auto_sprite_slice) ... ok
 test_crossfade_preserves_unassociated_color (test_workflows.Workflows.test_crossfade_preserves_unassociated_color) ... ok
+test_cube_create_validation (test_workflows.Workflows.test_cube_create_validation) ... ok
+test_cube_download_bundle (test_workflows.Workflows.test_cube_download_bundle) ... ok
+test_cube_erase_and_partial_alpha (test_workflows.Workflows.test_cube_erase_and_partial_alpha) ... ok
+test_cube_frame_deletion_blocked_and_remap (test_workflows.Workflows.test_cube_frame_deletion_blocked_and_remap) ... ok
+test_cube_paint_rejections_keep_revision (test_workflows.Workflows.test_cube_paint_rejections_keep_revision) ... ok
+test_cube_paint_single_undo_and_sync (test_workflows.Workflows.test_cube_paint_single_undo_and_sync) ... ok
+test_cube_persistence_and_remove (test_workflows.Workflows.test_cube_persistence_and_remove) ... ok
 test_export_jobs_all_formats (test_workflows.Workflows.test_export_jobs_all_formats) ... ok
 test_flood_fill_stays_inside_shape (test_workflows.Workflows.test_flood_fill_stays_inside_shape) ... ok
 test_geometry_scales_boxes_and_pivots (test_workflows.Workflows.test_geometry_scales_boxes_and_pivots) ... ok
@@ -31,6 +38,6 @@ test_time_resample_total_preserved (test_workflows.Workflows.test_time_resample_
 test_transform_tween_end_state (test_workflows.Workflows.test_transform_tween_end_state) ... ok
 
 ----------------------------------------------------------------------
-Ran 31 tests in 1.112s
+Ran 38 tests in 1.256s
 
 OK

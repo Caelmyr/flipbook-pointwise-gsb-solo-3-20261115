@@ -557,6 +557,37 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
         data = body()
         return jsonify(recipes.apply(key, v.revision(data), recipe_id, selected(data, store.get(key))))
 
+    @api.post('/projects/<key>/cubes')
+    def cube_create(key):
+        from . import cube
+        data = body()
+        return jsonify(cube.create(store, key, v.revision(data), data)), 201
+
+    @api.post('/projects/<key>/cubes/<cube_id>/update')
+    def cube_update(key, cube_id):
+        from . import cube
+        data = body()
+        return jsonify(cube.update(store, key, v.revision(data), cube_id, data))
+
+    @api.post('/projects/<key>/cubes/<cube_id>/paint')
+    def cube_paint(key, cube_id):
+        from . import cube
+        data = body()
+        return jsonify(cube.paint(store, key, v.revision(data), cube_id, data))
+
+    @api.delete('/projects/<key>/cubes/<cube_id>')
+    def cube_remove(key, cube_id):
+        from . import cube
+        data = body()
+        return jsonify(cube.remove(store, key, v.revision(data), cube_id))
+
+    @api.get('/projects/<key>/cubes/<cube_id>/download')
+    def cube_download(key, cube_id):
+        from . import cube
+        with store.lock:
+            payload = cube.bundle(store, store.get(key), cube_id)
+        return download(payload, 'cube-textures.zip', 'application/zip')
+
     @api.post('/projects/<key>/maps')
     def create_map(key):
         data = body()
