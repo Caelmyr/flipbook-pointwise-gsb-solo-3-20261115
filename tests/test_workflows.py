@@ -137,6 +137,118 @@ class Workflows(unittest.TestCase):
         project = self.mutate(project, 'reverse')
         self.assertEqual([f['id'] for f in project['frames']], reversed_ids)
 
+    def exposure_source(self, durations, colors):
+        project = self.new(16, 16)
+        first = project['frames'][0]['id']
+        for _ in range(len(durations) - 1):
+            project = self.mutate(project, 'frames', {'source': first})
+        for frame, color, duration in zip(project['frames'], colors, durations):
+            path = 'frames/' + frame['id'] + '/layers/' + frame['layers'][0]['id']
+            project = self.mutate(project, path + '/draw', {'tool': 'rectangle', 'color': color, 'points': [[0, 0], [15, 15]], 'filled': True})
+            project = self.mutate(project, 'frames/' + frame['id'], {'duration': duration}, 'PATCH')
+        return project
+
+    def compose(self, tracks, total=460, expected=201, **extra):
+        payload = {'name': '分轨镜头', 'total': total, 'tracks': tracks}
+        payload.update(extra)
+        return self.call('POST', '/api/compositions', payload, expected)
+
+    def track(self, source, **extra):
+        body = {'project_id': source['id'], 'clip_id': None, 'start': 0, 'repeat': 1, 'hold': False, 'x': 0, 'y': 0}
+        body.update(extra)
+        return body
+
+    def shot_pixels(self, shot):
+        return [self.image(shot, index).getpixel((8, 8)) for index in range(len(shot['frames']))]
+
+    def test_composition_true_exposure_boundaries(self):
+        source = self.exposure_source([100, 30, 100], ['#ff0000ff', '#00ff00ff', '#0000ffff'])
+        shot = self.compose([self.track(source, repeat=2)], total=460)
+        self.assertEqual(shot['animation_timing'], 'exact_composition')
+        self.assertEqual(sum(f['duration'] for f in shot['frames']), 460)
+        self.assertEqual([(f['duration']) for f in shot['frames']], [100, 30, 100, 100, 30, 100])
+        red, green, blue = (255, 0, 0, 255), (0, 255, 0, 255), (0, 0, 255, 255)
+        self.assertEqual(self.shot_pixels(shot), [red, green, blue, red, green, blue])
+        elapsed = 0
+        for frame in shot['frames']:
+            self.assertEqual(frame['name'], f'镜头 {elapsed}ms')
+            elapsed += frame['duration']
+
+    def test_composition_exact_total_for_odd_request(self):
+        source = self.exposure_source([100], ['#ff0000ff'])
+        shot = self.compose([self.track(source, repeat=0)], total=450)
+        self.assertEqual(sum(f['duration'] for f in shot['frames']), 450)
+        self.assertEqual([f['duration'] for f in shot['frames']], [100, 100, 100, 100, 50])
+
+    def test_composition_hold_and_disappear_after_finite_loops(self):
+        source = self.exposure_source([100, 30, 100], ['#ff0000ff', '#00ff00ff', '#0000ffff'])
+        held = self.compose([self.track(source, repeat=1, hold=True)], total=400)
+        self.assertEqual(sum(f['duration'] for f in held['frames']), 400)
+        self.assertEqual([f['duration'] for f in held['frames']], [100, 30, 100, 170])
+        blue = (0, 0, 255, 255)
+        self.assertEqual(self.shot_pixels(held), [(255, 0, 0, 255), (0, 255, 0, 255), blue, blue])
+        gone = self.compose([self.track(source, repeat=1, hold=False)], total=400)
+        self.assertEqual([f['duration'] for f in gone['frames']], [100, 30, 100, 170])
+        self.assertEqual(self.shot_pixels(gone)[-1], (0, 0, 0, 0))
+
+    def test_composition_track_start_and_position_offset(self):
+        source = self.exposure_source([50], ['#ff0000ff'])
+        shot = self.compose([self.track(source, start=30, repeat=0, x=2, y=1)], total=100)
+        self.assertEqual([f['duration'] for f in shot['frames']], [30, 50, 20])
+        self.assertEqual(self.image(shot, 0).getpixel((8, 8)), (0, 0, 0, 0))
+        self.assertEqual(self.image(shot, 1).getpixel((2, 1)), (255, 0, 0, 255))
+        self.assertEqual(self.image(shot, 1).getpixel((1, 1)), (0, 0, 0, 0))
+        self.assertEqual(self.image(shot, 1).getpixel((2, 0)), (0, 0, 0, 0))
+
+    def test_composition_bakes_independent_editable_pixels(self):
+        source = self.exposure_source([100], ['#ff0000ff'])
+        revision = source['revision']
+        shot = self.compose([self.track(source, repeat=0)], total=200)
+        self.assertEqual(self.store.get(source['id'])['revision'], revision)
+        layer = shot['frames'][0]['layers'][0]
+        self.assertNotIn('scene_source', layer)
+        source = self.mutate(self.store.get(source['id']), self.layer_path(source, 'draw'), {'tool': 'rectangle', 'color': '#ffffffff', 'points': [[0, 0], [15, 15]], 'filled': True})
+        self.assertEqual(self.image(source, 0).getpixel((8, 8)), (255, 255, 255, 255))
+        self.assertEqual(self.image(self.store.get(shot['id']), 0).getpixel((8, 8)), (255, 0, 0, 255))
+        shot = self.mutate(self.store.get(shot['id']), 'frames/' + shot['frames'][0]['id'] + '/layers/' + layer['id'] + '/draw', {'tool': 'pencil', 'color': '#ffff00ff', 'points': [[1, 1]], 'size': 1})
+        self.assertEqual(self.image(shot, 0).getpixel((1, 1)), (255, 255, 0, 255))
+
+    def test_composition_archive_and_animation_express_same_shot(self):
+        import tempfile as tempfile_module
+        source = self.exposure_source([100, 30], ['#ff0000ff', '#00ff00ff'])
+        shot = self.compose([self.track(source, repeat=2)], total=260)
+        data, details = animated_png(self.store, shot, {})
+        self.assertEqual(details['duration'], 260)
+        with Image.open(io.BytesIO(data)) as decoded:
+            self.assertEqual(decoded.n_frames, len(shot['frames']))
+            durations = []
+            for index in range(decoded.n_frames):
+                decoded.seek(index)
+                durations.append(decoded.info['duration'])
+                preview = render_frame(self.store, shot, shot['frames'][index]['id'])
+                np.testing.assert_array_equal(np.asarray(decoded.convert('RGBA')), np.asarray(preview))
+            self.assertEqual(durations, [100, 30, 100, 30])
+        bundle = project_bundle(self.store, shot)
+        other = tempfile_module.TemporaryDirectory()
+        self.addCleanup(other.cleanup)
+        another = create_app(other.name)
+        another.testing = True
+        client = another.test_client()
+        response = client.post('/api/import-bundle', data={'file': (io.BytesIO(bundle), 'project.zip')})
+        self.assertEqual(response.status_code, 201, response.json)
+        copied = response.json
+        self.assertTrue(client.get(self.base(copied) + '/integrity').json['valid'])
+        self.assertEqual(copied['animation_timing'], 'exact_composition')
+        for index in range(len(shot['frames'])):
+            original = render_frame(self.store, shot, shot['frames'][index]['id'])
+            restored = render_frame(another.extensions['store'], copied, copied['frames'][index]['id'])
+            np.testing.assert_array_equal(np.asarray(original), np.asarray(restored))
+
+    def test_composition_rejects_overlong_exposure_plan(self):
+        source = self.exposure_source([20], ['#ff0000ff'])
+        result = self.compose([self.track(source, repeat=0)], total=30000, expected=400)
+        self.assertIn('300', result['error'])
+
     def test_pingpong_does_not_duplicate_endpoints(self):
         project = self.demo('tiles')
         project = self.mutate(project, 'pingpong')

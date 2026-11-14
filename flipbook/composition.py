@@ -1,8 +1,10 @@
 """Compile a shot from captured source states into independent editable cels."""
-from copy import deepcopy
 from PIL import Image
 from . import validate as v
 from .model import find_frame, new_frame, new_layer
+
+MAX_FRAMES = 300
+MAX_FRAME_DURATION = 10000
 
 
 def source_sequence(project, clip_id=None):
@@ -32,6 +34,8 @@ def prepare(store, body):
             captured[key] = store.get(key)
         project = captured[key]
         sequence = source_sequence(project, item.get('clip_id'))
+        if not sequence:
+            raise v.Invalid('镜头轨道没有可用曝光')
         tracks.append({'project': project, 'sequence': sequence,
                        'clip_id': item.get('clip_id'),
                        'name': v.text(item.get('name', project['name']), '轨道名称', 100, False),
@@ -42,6 +46,12 @@ def prepare(store, body):
                        'y': v.integer(item.get('y', 0), '轨道位置Y', -2048, 2048)})
     if not tracks:
         raise v.Invalid('至少选择一条镜头轨道')
+    seen = {}
+    for track in tracks:
+        count = seen.get(track['name'], 0) + 1
+        seen[track['name']] = count
+        if count > 1:
+            track['name'] = f"{track['name'][:96]} {count}"
     sizes = {(track['project']['width'], track['project']['height']) for track in tracks}
     if len(sizes) != 1:
         raise v.Invalid('当前镜头使用同尺寸项目，请先统一源动画画布')
@@ -64,41 +74,90 @@ def frame_at(track, elapsed):
     raise v.Invalid('轨道曝光序列无效')
 
 
+def track_cuts(track, total):
+    """Times inside (0, total) where the track switches its displayed cel."""
+    start = track['start']
+    if start >= total:
+        return set()
+    cuts = {start}
+    cycle = sum(duration for _, duration in track['sequence'])
+    active = min(total, start + track['repeat'] * cycle) if track['repeat'] else total
+    elapsed = start
+    while elapsed < active:
+        for _, duration in track['sequence']:
+            elapsed += duration
+            if elapsed < active:
+                cuts.add(elapsed)
+    if track['repeat'] and active < total:
+        cuts.add(active)
+    return cuts
+
+
+def plan_segments(tracks, total):
+    """Cut the shot at every true exposure boundary; durations sum to total exactly."""
+    cuts = {0, total}
+    for track in tracks:
+        cuts.update(track_cuts(track, total))
+    points = sorted(cuts)
+    segments = []
+    for start, end in zip(points, points[1:]):
+        while end - start > MAX_FRAME_DURATION:
+            segments.append((start, MAX_FRAME_DURATION))
+            start += MAX_FRAME_DURATION
+        segments.append((start, end - start))
+    if len(segments) > MAX_FRAMES:
+        raise v.Invalid('按真实曝光边界展开超过300个镜头帧，请缩短总时长或减少循环轮数')
+    return segments
+
+
 def compose(store, body):
     with store.lock:
         name, total, tracks, size = prepare(store, body)
-        fps = v.integer(body.get('fps', 25), '镜头采样帧率', 1, 50)
-        duration = max(20, round(1000 / fps))
-        points = list(range(0, total, duration))
-        if len(points) > 300:
-            raise v.Invalid('镜头采样超过300帧')
-        v.pixel_budget(*size, len(points) * len(tracks))
+        segments = plan_segments(tracks, total)
+        v.pixel_budget(*size, len(segments) * len(tracks))
         created = store.create(name, *size)
         key = created['id']
         blank = store.put_image(key, Image.new('RGBA', size))
+        from .composite import render_frame
+        baked = {}
         with store.edit(key, 0, '生成分轨镜头') as project:
             project['frames'] = []
             project['loop'] = 1
-            for at in points:
-                frame = new_frame(blank, f'镜头 {at}ms', max(20, min(duration, total-at)))
+            project['animation_timing'] = 'exact_composition'
+            for at, duration in segments:
+                frame = new_frame(blank, f'镜头 {at}ms', duration)
                 frame['layers'] = []
-                for track in tracks:
-                    layer = new_layer(track['name'], blank, transform=v.transform({'x':track['x'],'y':track['y']}))
-                    layer['scene_source'] = {'project_id':track['project']['id'],'clip_id':track['clip_id'],
-                                             'start':track['start'],'repeat':track['repeat'],'hold':track['hold'],
-                                             'at':at}
+                for index, track in enumerate(tracks):
+                    source_frame = frame_at(track, at)
+                    if source_frame is None:
+                        asset = blank
+                    else:
+                        token = (index, source_frame)
+                        if token not in baked:
+                            image = render_frame(store, track['project'], source_frame)
+                            baked[token] = store.put_image(key, image)
+                        asset = baked[token]
+                    layer = new_layer(track['name'], asset, transform=v.transform({'x': track['x'], 'y': track['y']}))
                     frame['layers'].append(layer)
                 project['frames'].append(frame)
-            project['composition'] = {'requested_duration':total,'sources':[t['project']['id'] for t in tracks]}
+            project['composition'] = {
+                'requested_duration': total,
+                'sources': [track['project']['id'] for track in tracks],
+                'tracks': [{'name': track['name'], 'project_id': track['project']['id'],
+                            'clip_id': track['clip_id'], 'start': track['start'],
+                            'repeat': track['repeat'], 'hold': track['hold'],
+                            'x': track['x'], 'y': track['y']} for track in tracks],
+                'baked': True,
+            }
         return store.get(key)
 
 
 def render_external(store, reference):
     from .composite import render_frame
     project = store.get(reference['project_id'])
-    track = {'start':reference['start'],'repeat':reference['repeat'],'hold':reference['hold'],
-             'sequence':source_sequence(project, reference['clip_id'])}
-    frame = frame_at(track,reference['at'])
+    track = {'start': reference['start'], 'repeat': reference['repeat'], 'hold': reference['hold'],
+             'sequence': source_sequence(project, reference['clip_id'])}
+    frame = frame_at(track, reference['at'])
     if frame is None:
-        return Image.new('RGBA',(project['width'],project['height']))
-    return render_frame(store,project,frame)
+        return Image.new('RGBA', (project['width'], project['height']))
+    return render_frame(store, project, frame)

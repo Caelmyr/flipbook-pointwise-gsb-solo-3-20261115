@@ -220,7 +220,7 @@ async function openRecipes(){
 $('compose').onclick=guard(openComposition);
 async function openComposition(){
   const body=dialog('分轨镜头生成');
-  body.append(element('p','选择同尺寸动画或片段，依照真实时间安排最多4条轨道。每条轨道画面在镜头中作为一层，源项目内的图层仍留在源项目。镜头最多30秒、300个曝光帧；普通动画保持20毫秒下限。','hint'));
+  body.append(element('p','选择同尺寸动画或片段，按真实曝光边界切换最多4条轨道，短曝光不会被采样吞掉。生成时把源画面烘焙为独立图层像素：之后修改源项目不影响镜头，可直接绘制、导出透明动画或可编辑项目归档，源项目保持原样。镜头最多30秒、300个曝光帧，帧时长精确到1毫秒。','hint'));
   if(!S.projects.length){body.append(element('p','先创建或导入用于镜头的源动画。'));return}
   const rows=[],trackArea=element('div');
   async function addTrack(){

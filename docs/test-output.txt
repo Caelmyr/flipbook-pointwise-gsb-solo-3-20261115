@@ -5,6 +5,13 @@ test_app_reload_persistence (test_workflows.Workflows.test_app_reload_persistenc
 test_archive_rejects_traversal_and_missing_assets (test_workflows.Workflows.test_archive_rejects_traversal_and_missing_assets) ... ok
 test_atlas_pixel_roundtrip_and_no_overlaps (test_workflows.Workflows.test_atlas_pixel_roundtrip_and_no_overlaps) ... ok
 test_auto_sprite_slice (test_workflows.Workflows.test_auto_sprite_slice) ... ok
+test_composition_archive_and_animation_express_same_shot (test_workflows.Workflows.test_composition_archive_and_animation_express_same_shot) ... ok
+test_composition_bakes_independent_editable_pixels (test_workflows.Workflows.test_composition_bakes_independent_editable_pixels) ... ok
+test_composition_exact_total_for_odd_request (test_workflows.Workflows.test_composition_exact_total_for_odd_request) ... ok
+test_composition_hold_and_disappear_after_finite_loops (test_workflows.Workflows.test_composition_hold_and_disappear_after_finite_loops) ... ok
+test_composition_rejects_overlong_exposure_plan (test_workflows.Workflows.test_composition_rejects_overlong_exposure_plan) ... ok
+test_composition_track_start_and_position_offset (test_workflows.Workflows.test_composition_track_start_and_position_offset) ... ok
+test_composition_true_exposure_boundaries (test_workflows.Workflows.test_composition_true_exposure_boundaries) ... ok
 test_crossfade_preserves_unassociated_color (test_workflows.Workflows.test_crossfade_preserves_unassociated_color) ... ok
 test_export_jobs_all_formats (test_workflows.Workflows.test_export_jobs_all_formats) ... ok
 test_flood_fill_stays_inside_shape (test_workflows.Workflows.test_flood_fill_stays_inside_shape) ... ok
@@ -31,6 +38,6 @@ test_time_resample_total_preserved (test_workflows.Workflows.test_time_resample_
 test_transform_tween_end_state (test_workflows.Workflows.test_transform_tween_end_state) ... ok
 
 ----------------------------------------------------------------------
-Ran 31 tests in 1.112s
+Ran 38 tests in 1.364s
 
 OK

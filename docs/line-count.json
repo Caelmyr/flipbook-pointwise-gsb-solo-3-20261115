@@ -14,12 +14,12 @@
     {
       "file": "flipbook/analysis.py",
       "effective_lines": 172,
-      "sha256": "7104e63f618976eb9d9d807c5cb48ff02993a84581e87937c1abcf5248f14a2a"
+      "sha256": "7db79a089a40db9da0c26f664eed9c7a59af7cd91b03eda51d247cf0784042d5"
     },
     {
       "file": "flipbook/api.py",
-      "effective_lines": 537,
-      "sha256": "a6d51747422d82f5b617998d213afcafc7a1f4c4cbf9f6a3d33881e4902db2bf"
+      "effective_lines": 614,
+      "sha256": "f309107154f2d7bb6df2732e1682b9ad7822d40f18ad60c902d50b0f43477908"
     },
     {
       "file": "flipbook/atlas.py",
@@ -32,14 +32,29 @@
       "sha256": "a5899f5225a0f21e2a7f0e23e6834b719d5c66423273ab40fc99f7bcd9ec7574"
     },
     {
+      "file": "flipbook/atlas_workspaces.py",
+      "effective_lines": 97,
+      "sha256": "c263f5c418765b8f2c7d1500664ce7a0f61ef30ab396ba14f93fb5105f50fe79"
+    },
+    {
       "file": "flipbook/autoslice.py",
       "effective_lines": 82,
       "sha256": "2f53199311881bc5637aa5c50a5c7fe66ff5f1473e0862cfd5fa4c1d58afdb56"
     },
     {
+      "file": "flipbook/caption_font.py",
+      "effective_lines": 17,
+      "sha256": "f31687607bbaca4607b34acb1f3daffcd0039da6e2a860e0925af3161e6c2ebf"
+    },
+    {
       "file": "flipbook/catalog.py",
-      "effective_lines": 213,
-      "sha256": "252f93c6af4f670aae75bb2d95feb03e01446a432e09c90374c7e6691a5c0ad3"
+      "effective_lines": 214,
+      "sha256": "6da582b6acd68a957300f80234f33959d4df8532c216e7fad0dcb00d9e4697e9"
+    },
+    {
+      "file": "flipbook/cels.py",
+      "effective_lines": 69,
+      "sha256": "285630b941f1788de0d232805281c3e9171a507f8fdf08c69dec3e273a3435bd"
     },
     {
       "file": "flipbook/collision.py",
@@ -48,13 +63,18 @@
     },
     {
       "file": "flipbook/composite.py",
-      "effective_lines": 143,
-      "sha256": "d7521496842dc6344f87642698510eeabd195b2cc806990d2abfe65177af417a"
+      "effective_lines": 151,
+      "sha256": "c4fce4294c642666f66d1153ae0b683df57cc7f1f2b29c8feb4669faf9822064"
+    },
+    {
+      "file": "flipbook/composition.py",
+      "effective_lines": 145,
+      "sha256": "985754e53d85314d0b16b75b0404fd0d94dc238f45725d82642a847a339db241"
     },
     {
       "file": "flipbook/contracts.py",
-      "effective_lines": 115,
-      "sha256": "5eee2ecd19b91e8b5f088f25b75aac840b9f19b261ade5cc83479b171483a23c"
+      "effective_lines": 129,
+      "sha256": "dbc9e6fa1f3bee9996cd7ad9cc54ecd312b2750e5decc3f5c74d83f27b98284f"
     },
     {
       "file": "flipbook/drawing.py",
@@ -63,18 +83,23 @@
     },
     {
       "file": "flipbook/exporting.py",
-      "effective_lines": 186,
-      "sha256": "527390ecc8804173540568996254dd6e3f99775072f169e62d111f79c86777d3"
+      "effective_lines": 188,
+      "sha256": "acb3ebfcfe3666b1363e6253c4ca826f378e62c37196f590452e633b1da3b52f"
+    },
+    {
+      "file": "flipbook/exposures.py",
+      "effective_lines": 26,
+      "sha256": "edfcde50aef2314e5b1b5f01b3df7e8c95a8ab086b1de898d9d0af3d33904dcb"
     },
     {
       "file": "flipbook/geometry.py",
-      "effective_lines": 152,
-      "sha256": "ad556a5b1e312bf3c1fb4eaaf574c53730baee4a687cd6385816a82f5259d3e9"
+      "effective_lines": 160,
+      "sha256": "11d7fee905fa1de55f9cac40e5a809a95c98fd7a2a45682887d989a7f2b286e1"
     },
     {
       "file": "flipbook/importing.py",
-      "effective_lines": 172,
-      "sha256": "b5c7fc66f0ebc904519dbc9f64932e0ec49fa78ee804cd90e471aca574ad84ff"
+      "effective_lines": 183,
+      "sha256": "fcfbcce4c29d49f7c8aed31721240cbe8dfbb36da3b94fc92f9de403d2573082"
     },
     {
       "file": "flipbook/jobs.py",
@@ -82,19 +107,34 @@
       "sha256": "50db1f7339ce897b9fa6277d5b162b563da363f9199593266d69972ed38b3eb9"
     },
     {
+      "file": "flipbook/layer_nodes.py",
+      "effective_lines": 24,
+      "sha256": "ce06b98eba015d06c5c55a9b296dab662ab6facffcbf80119f0d62f4fe24aa54"
+    },
+    {
+      "file": "flipbook/layer_tree.py",
+      "effective_lines": 88,
+      "sha256": "71419fa40c345fc3563f4336f2d20903f9da1555391422dbbd501efa1036f20c"
+    },
+    {
       "file": "flipbook/layers.py",
-      "effective_lines": 185,
-      "sha256": "a3469998a36d33970b860ea597f7081d3e4a05bab3fc162140449abbc739c518"
+      "effective_lines": 270,
+      "sha256": "d18dd76eb847d7b0381d91a822543d190763554651d5d4aad7d5c81b71bb6d7a"
+    },
+    {
+      "file": "flipbook/map_animation.py",
+      "effective_lines": 145,
+      "sha256": "e6405a897669f455a5ac35aea50ae9bd99547553c99b69c54730f39d74037164"
     },
     {
       "file": "flipbook/matting.py",
-      "effective_lines": 129,
-      "sha256": "c855689ed7aaa7a4e22e92762198dde5e27d3db239a14fa7156f41740f7ff884"
+      "effective_lines": 133,
+      "sha256": "f3c438125a2beab85de348677b30ad184ad6e7d129883c5e2eb9f6118e249651"
     },
     {
       "file": "flipbook/model.py",
-      "effective_lines": 133,
-      "sha256": "dd8677a3c596c885fb72fc5a26fdcd2ab3bb04be23b211ab25a7fc77c1d785ad"
+      "effective_lines": 141,
+      "sha256": "74c6800af3efb5fe88cb851c96e6edc008d4620afeabc4c59c5945120fd6faaf"
     },
     {
       "file": "flipbook/multipage.py",
@@ -103,18 +143,18 @@
     },
     {
       "file": "flipbook/ninepatch.py",
-      "effective_lines": 99,
-      "sha256": "6be3328317433bdb0accdf7ec319fddbe5695420ee79ba44a627d2830e2bfdcf"
+      "effective_lines": 103,
+      "sha256": "3860979a5c14789ed0e5dfc2a33ef87b5c32d4164a064e691c54a4a0e4afc4a8"
     },
     {
       "file": "flipbook/palettes.py",
-      "effective_lines": 161,
-      "sha256": "1e66c68bb88c452d1ff0c832d43ba66e0cad0111ba8136f222f59fb76ef38d03"
+      "effective_lines": 171,
+      "sha256": "b55493365350b5e0765844ecbe8d2790847ae2ef1597dea634c274504624ad1a"
     },
     {
       "file": "flipbook/pipelines.py",
-      "effective_lines": 130,
-      "sha256": "ccf0a71c20af88e45cb00e905393afa017de178f644c1c9bf314e1d820d4b39e"
+      "effective_lines": 138,
+      "sha256": "ebb602b2e437430ed17f58e54e566789dcde4b962de298699e37e85dc0eb0ddc"
     },
     {
       "file": "flipbook/pixels.py",
@@ -142,29 +182,34 @@
       "sha256": "687009cfab52a32d9381b2dfddf5b2f182a55759699167e1aa3051124acc3e3b"
     },
     {
+      "file": "flipbook/role_tools.py",
+      "effective_lines": 102,
+      "sha256": "75a98fcdd04dddd4898346e35be94e93eb6642818eae376aba66f7588dc8bb75"
+    },
+    {
       "file": "flipbook/sampling.py",
       "effective_lines": 38,
       "sha256": "27dac288054545ef9cf88c1e7b9e23d1d506d783d0c7fe75dbc5611b75e246bd"
     },
     {
       "file": "flipbook/snapshots.py",
-      "effective_lines": 108,
-      "sha256": "625ec0a2aea595714b5237be255b02bd70ced0f3b7f198c6b73b5ce66000cf2b"
+      "effective_lines": 118,
+      "sha256": "d0905e7117399cc0823fd1606129ed695760a913979137d9b60495c7e8dbf9d9"
     },
     {
       "file": "flipbook/store.py",
-      "effective_lines": 211,
-      "sha256": "dd95a84cd134cf1dfe7456e9d4d163492285fb77a27fe27f4c942ac069d57527"
+      "effective_lines": 215,
+      "sha256": "db0bb4fa7647eb1443f1afec955262bd38a7c458f02065985eee04f6a7630720"
     },
     {
       "file": "flipbook/tilemaps.py",
-      "effective_lines": 172,
-      "sha256": "954339c8aaa2a717618294fbef5f49ad61a442625bf9ce924d1f0201a7a59ab1"
+      "effective_lines": 164,
+      "sha256": "bf6d846772d8394f283b4133427b0f68b58fd592604c14e7793d6d2ffc3be8a1"
     },
     {
       "file": "flipbook/timeline.py",
-      "effective_lines": 162,
-      "sha256": "7bce675527cf0dc5f88e907162482b13c7e64de4b42725874badc31066004932"
+      "effective_lines": 159,
+      "sha256": "5352da20148ba308360ff6fcfb6ddccec32c288d9bbc78e03e48baa84eaf145b"
     },
     {
       "file": "flipbook/tween.py",
@@ -173,10 +218,10 @@
     },
     {
       "file": "flipbook/validate.py",
-      "effective_lines": 180,
-      "sha256": "514538d70ad261d2156f5b9c523bcef2ef886dd3c45490bedd389cb808df9ecf"
+      "effective_lines": 184,
+      "sha256": "6483fabf22cb68e90e460e163265ab6c854b96fbac588da6da4ebca0793f52b7"
     }
   ],
-  "total": 5051,
+  "total": 6011,
   "passes_5000": true
 }
