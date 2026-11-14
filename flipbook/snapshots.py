@@ -93,6 +93,8 @@ class Snapshots:
                     for version in workspace['versions']:
                         page = self.store.image(project_id, version['page_asset'])
                         version['page_asset'] = self.store.put_image(created['id'], page)
+                from .lighting import copy_referenced
+                copy_referenced(self.store, project_id, created['id'], project)
             return self.store.get(created['id'])
 
     def compare(self, project_id, first_id, second_id):

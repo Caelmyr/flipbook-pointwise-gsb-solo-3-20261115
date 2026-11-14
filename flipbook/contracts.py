@@ -97,6 +97,8 @@ def check_assets(store, project):
               for asset in [layer['asset'], layer.get('role_legacy_asset')] if asset}
     from .atlas_workspaces import asset_sizes
     page_sizes = asset_sizes(project)
+    from .lighting import referenced_assets
+    page_sizes.update(referenced_assets(project))
     assets.update(page_sizes)
     for asset in assets:
         checked.add(asset)

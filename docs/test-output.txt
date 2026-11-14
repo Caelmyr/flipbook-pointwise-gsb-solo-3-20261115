@@ -12,6 +12,12 @@ test_geometry_scales_boxes_and_pivots (test_workflows.Workflows.test_geometry_sc
 test_gif_opaque_black_not_reserved_transparency (test_workflows.Workflows.test_gif_opaque_black_not_reserved_transparency) ... ok
 test_layer_duplicate_merge_matches_render (test_workflows.Workflows.test_layer_duplicate_merge_matches_render) ... ok
 test_layer_opacity_and_blending (test_workflows.Workflows.test_layer_opacity_and_blending) ... ok
+test_lighting_confirm_export_reproduces_confirmed_frames (test_workflows.Workflows.test_lighting_confirm_export_reproduces_confirmed_frames) ... ok
+test_lighting_convention_switch (test_workflows.Workflows.test_lighting_convention_switch) ... ok
+test_lighting_frame_removal_cleans_pairs (test_workflows.Workflows.test_lighting_frame_removal_cleans_pairs) ... ok
+test_lighting_normals_follow_surface_transform (test_workflows.Workflows.test_lighting_normals_follow_surface_transform) ... ok
+test_lighting_pairing_validation_and_shared_reuse (test_workflows.Workflows.test_lighting_pairing_validation_and_shared_reuse) ... ok
+test_lighting_transparent_pixels_not_lit (test_workflows.Workflows.test_lighting_transparent_pixels_not_lit) ... ok
 test_locked_layer_rejects_and_revision_unchanged (test_workflows.Workflows.test_locked_layer_rejects_and_revision_unchanged) ... ok
 test_matte_and_auto_collision (test_workflows.Workflows.test_matte_and_auto_collision) ... ok
 test_mirror_drawing_and_erase (test_workflows.Workflows.test_mirror_drawing_and_erase) ... ok
@@ -31,6 +37,6 @@ test_time_resample_total_preserved (test_workflows.Workflows.test_time_resample_
 test_transform_tween_end_state (test_workflows.Workflows.test_transform_tween_end_state) ... ok
 
 ----------------------------------------------------------------------
-Ran 31 tests in 1.112s
+Ran 37 tests in 1.144s
 
 OK

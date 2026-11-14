@@ -370,6 +370,138 @@ class Workflows(unittest.TestCase):
         finally:
             another.extensions['jobs'].executor.shutdown(wait=True)
 
+    def normal_png(self, size=(32, 32), rgb=(128, 128, 255)):
+        image = Image.new('RGBA', size, rgb + (255,))
+        stream = io.BytesIO()
+        image.save(stream, format='PNG')
+        return stream.getvalue()
+
+    def upload_normal(self, project, png, frame_id=None, expected=200):
+        form = {'revision': str(project['revision']), 'file': (io.BytesIO(png), 'normal.png')}
+        if frame_id:
+            form['frame_id'] = frame_id
+        response = self.client.post(self.base(project) + '/lighting/normals', data=form, content_type='multipart/form-data')
+        self.assertEqual(response.status_code, expected, response.json if response.is_json else response.data[:200])
+        return response.json
+
+    def lighting_status(self, project):
+        return self.call('GET', self.base(project) + '/lighting/status')
+
+    def test_lighting_pairing_validation_and_shared_reuse(self):
+        project = self.new()
+        status = self.lighting_status(project)
+        self.assertEqual(status['frames'][0]['source'], 'none')
+        self.assertIn('缺少法线', status['frames'][0]['error'])
+        frame_id = project['frames'][0]['id']
+        response = self.client.post(self.base(project) + '/lighting/preview', json={'frame_id': frame_id, 'view': 'after'})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('缺少法线', response.json['error'])
+        before_revision = project['revision']
+        self.upload_normal(project, self.normal_png((16, 16)), expected=400)
+        self.assertEqual(self.store.get(project['id'])['revision'], before_revision)
+        project = self.upload_normal(project, self.normal_png())
+        status = self.lighting_status(project)
+        self.assertEqual(status['frames'][0]['source'], 'shared')
+        self.assertIsNone(status['frames'][0]['error'])
+        project = self.upload_normal(project, self.normal_png(rgb=(150, 128, 255)), frame_id)
+        self.assertEqual(self.lighting_status(project)['frames'][0]['source'], 'frame')
+        project = self.mutate(project, 'lighting/normals/remove', {})
+        self.assertEqual(self.lighting_status(project)['frames'][0]['source'], 'frame')
+        project = self.mutate(project, 'lighting/normals/remove', {'frame_id': frame_id})
+        self.assertEqual(self.lighting_status(project)['frames'][0]['source'], 'none')
+        project = self.upload_normal(project, self.normal_png())
+        project = self.mutate(project, 'undo')
+        self.assertEqual(self.lighting_status(project)['frames'][0]['source'], 'none')
+
+    def test_lighting_normals_follow_surface_transform(self):
+        from flipbook.lighting import transform_pair, decode_normals, encode_normals, IDENTITY
+        color = Image.new('RGBA', (8, 8), (200, 100, 50, 255))
+        nx_map = Image.new('RGBA', (8, 8), (255, 128, 128, 255))
+        _, mirrored = transform_pair(color, nx_map, {**IDENTITY, 'flip_x': True}, 'opengl')
+        self.assertLess(decode_normals(mirrored, 'opengl')[4, 4][0], -0.9)
+        _, rotated = transform_pair(color, nx_map, {**IDENTITY, 'rotation': 90}, 'opengl')
+        self.assertGreater(decode_normals(rotated, 'opengl')[4, 4][1], 0.9)
+        tilted = encode_normals(np.array([[[2 ** -.5, 0, 2 ** -.5]]]), 'opengl').resize((4, 4), Image.Resampling.NEAREST)
+        _, scaled = transform_pair(color.resize((4, 4)), tilted, {**IDENTITY, 'scale_x': 2.0}, 'opengl')
+        vector = decode_normals(scaled, 'opengl')[2, 2]
+        expected = np.array([2 ** -.5 / 2, 0, 2 ** -.5])
+        expected /= np.linalg.norm(expected)
+        np.testing.assert_allclose(vector, expected, atol=0.02)
+        flat = Image.new('RGBA', (8, 8), (128, 128, 255, 255))
+        _, stretched = transform_pair(color, flat, {**IDENTITY, 'scale_x': 2.0, 'scale_y': 0.5}, 'opengl')
+        np.testing.assert_allclose(decode_normals(stretched, 'opengl')[4, 4], [0, 0, 1], atol=0.02)
+
+    def test_lighting_transparent_pixels_not_lit(self):
+        from flipbook.lighting import shade, IDENTITY
+        color = Image.new('RGBA', (4, 4), (0, 0, 0, 0))
+        color.putpixel((1, 1), (200, 100, 50, 255))
+        color.putpixel((2, 2), (200, 100, 50, 128))
+        normal = Image.new('RGBA', (4, 4), (128, 128, 255, 255))
+        settings = {'convention': 'opengl', 'light': {'x': 0, 'y': 0, 'z': 1}, 'ambient': 0.2,
+                    'intensity': 1.0, 'light_color': '#ffffffff', 'transform': dict(IDENTITY)}
+        out = shade(color, normal, settings)
+        self.assertEqual(out.getpixel((0, 0)), (0, 0, 0, 0))
+        r, g, b, a = out.getpixel((1, 1))
+        self.assertEqual(a, 255)
+        self.assertTrue(abs(r - 240) <= 1 and abs(g - 120) <= 1 and abs(b - 60) <= 1)
+        self.assertEqual(out.getpixel((2, 2))[3], 128)
+
+    def test_lighting_convention_switch(self):
+        from flipbook.lighting import shade, IDENTITY
+        normal = Image.new('RGBA', (2, 2), (128, 255, 204, 255))
+        color = Image.new('RGBA', (2, 2), (100, 100, 100, 255))
+        base = {'light': {'x': 0, 'y': -1, 'z': 0.2}, 'ambient': 0.2, 'intensity': 1.0,
+                'light_color': '#ffffffff', 'transform': dict(IDENTITY)}
+        opengl = shade(color, normal, {**base, 'convention': 'opengl'}).getpixel((0, 0))[0]
+        directx = shade(color, normal, {**base, 'convention': 'directx'}).getpixel((0, 0))[0]
+        self.assertGreater(opengl, directx + 50)
+
+    def test_lighting_confirm_export_reproduces_confirmed_frames(self):
+        from flipbook.lighting import render_lit
+        project = self.paint(self.new())
+        project = self.mutate(project, 'frames', {'after': project['frames'][0]['id'], 'count': 1})
+        project = self.mutate(project, 'lighting/normals/generate', {'strength': 2.0})
+        status = self.lighting_status(project)
+        self.assertTrue(all(frame['error'] is None for frame in status['frames']))
+        project = self.mutate(project, 'lighting/settings', {
+            'convention': 'directx', 'ambient': 0.25, 'intensity': 1.2,
+            'transform': {'rotation': 30, 'flip_x': True, 'flip_y': False, 'scale_x': 1.5, 'scale_y': 0.75},
+        })
+        ids = [frame['id'] for frame in project['frames']]
+        project = self.mutate(project, 'lighting/confirm', {'frame_ids': ids})
+        status = self.lighting_status(project)
+        self.assertEqual(len(status['confirmed']), 2)
+        self.assertTrue(self.call('POST', self.base(project) + '/lighting/verify')['valid'])
+        data = self.call('GET', self.base(project) + '/lighting/export')
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            manifest = json.loads(archive.read('manifest.json'))
+            self.assertEqual(manifest['format'], 'flipbook-lighting-v1')
+            self.assertEqual(len(manifest['frames']), 2)
+            for entry in manifest['frames']:
+                color = Image.open(io.BytesIO(archive.read(entry['color']))).convert('RGBA')
+                normal = Image.open(io.BytesIO(archive.read(entry['normal']))).convert('RGBA')
+                lit = Image.open(io.BytesIO(archive.read(entry['lit']))).convert('RGBA')
+                reproduced = render_lit(color, normal, entry['settings'])
+                self.assertEqual(reproduced.tobytes(), lit.tobytes())
+        from flipbook.exporting import project_bundle
+        bundle = project_bundle(self.store, self.store.get(project['id']))
+        response = self.client.post('/api/import-bundle', data={'file': (io.BytesIO(bundle), 'project.zip')})
+        self.assertEqual(response.status_code, 201, response.json)
+        restored = self.lighting_status(response.json)
+        self.assertTrue(all(frame['error'] is None for frame in restored['frames']))
+        self.assertEqual(len(restored['confirmed']), 2)
+        fresh = self.new()
+        self.call('GET', self.base(fresh) + '/lighting/export', expected=400)
+
+    def test_lighting_frame_removal_cleans_pairs(self):
+        project = self.mutate(self.new(), 'frames', {'count': 1})
+        second = project['frames'][1]['id']
+        project = self.upload_normal(project, self.normal_png(), second)
+        self.assertEqual(self.lighting_status(project)['frames'][1]['source'], 'frame')
+        project = self.mutate(project, 'frames/remove', {'frame_ids': [second]})
+        self.assertEqual(project['lighting']['pairs'], {})
+        self.assertEqual(self.lighting_status(project)['frames'][0]['source'], 'none')
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -31,6 +31,10 @@ class Timeline:
             if len(ids) == len(project['frames']):
                 raise v.Invalid('动画至少保留一帧')
             project['frames'] = [f for f in project['frames'] if f['id'] not in ids]
+            lighting = project.get('lighting')
+            if lighting:
+                for frame_id in ids:
+                    lighting.get('pairs', {}).pop(frame_id, None)
             for clip in project['clips']:
                 clip['frame_ids'] = [key for key in clip['frame_ids'] if key not in ids]
                 if 'exposures' in clip:

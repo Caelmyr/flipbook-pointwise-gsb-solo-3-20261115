@@ -749,4 +749,64 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
         return send_file(io.BytesIO(payload), mimetype='application/zip', as_attachment=True,
                          download_name=f'atlas-version-{number}.zip')
 
+    @api.get('/projects/<key>/lighting/status')
+    def lighting_status(key):
+        from . import lighting
+        with store.lock:
+            project = store.get(key)
+            return jsonify({
+                'settings': lighting.current_settings(lighting.state(project)),
+                'frames': lighting.frame_status(store, project),
+                'confirmed': lighting.confirmed_summary(project),
+            })
+
+    @api.post('/projects/<key>/lighting/settings')
+    def lighting_settings(key):
+        from . import lighting
+        data = body()
+        return jsonify(lighting.update_settings(store, key, v.revision(data), data))
+
+    @api.post('/projects/<key>/lighting/normals')
+    def lighting_assign(key):
+        from . import lighting
+        revision = v.integer(request.form.get('revision'), '修订号', 0)
+        frame_id = request.form.get('frame_id') or None
+        return jsonify(lighting.assign_normal(store, key, revision, uploaded().stream, frame_id))
+
+    @api.post('/projects/<key>/lighting/normals/generate')
+    def lighting_generate(key):
+        from . import lighting
+        data = body()
+        return jsonify(lighting.generate_normal(store, key, v.revision(data), data))
+
+    @api.post('/projects/<key>/lighting/normals/remove')
+    def lighting_remove(key):
+        from . import lighting
+        data = body()
+        return jsonify(lighting.remove_normal(store, key, v.revision(data), data.get('frame_id')))
+
+    @api.post('/projects/<key>/lighting/preview')
+    def lighting_preview(key):
+        from . import lighting
+        data = body()
+        with store.lock:
+            project = store.get(key)
+            return image_response(lighting.preview(store, project, data.get('frame_id'), data.get('view', 'after'), data.get('settings')))
+
+    @api.post('/projects/<key>/lighting/confirm')
+    def lighting_confirm(key):
+        from . import lighting
+        data = body()
+        return jsonify(lighting.confirm(store, key, v.revision(data), data.get('frame_ids')))
+
+    @api.post('/projects/<key>/lighting/verify')
+    def lighting_verify(key):
+        from . import lighting
+        return jsonify(lighting.verify(store, key))
+
+    @api.get('/projects/<key>/lighting/export')
+    def lighting_export(key):
+        from . import lighting
+        return download(lighting.export_bundle(store, key), 'lighting-pairs.zip', 'application/zip')
+
     return api

@@ -168,6 +168,8 @@ def import_project_bundle(store, stream):
                   for asset in [layer['asset'], layer.get('role_legacy_asset')] if asset}
         from .atlas_workspaces import asset_sizes, workspaces
         page_sizes = asset_sizes(original)
+        from .lighting import referenced_assets, remap_assets
+        page_sizes.update(referenced_assets(original))
         assets.update(page_sizes)
         verified = {}
         for asset in assets:
@@ -194,4 +196,5 @@ def import_project_bundle(store, stream):
             for workspace in workspaces(project):
                 for version in workspace['versions']:
                     version['page_asset'] = mapping[version['page_asset']]
+            remap_assets(project, mapping)
         return store.get(created['id'])

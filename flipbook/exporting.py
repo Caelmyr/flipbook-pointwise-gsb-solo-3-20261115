@@ -159,6 +159,8 @@ def project_bundle(store, project):
               for asset in [layer['asset'], layer.get('role_legacy_asset')] if asset}
     from .atlas_workspaces import asset_sizes
     assets.update(asset_sizes(project))
+    from .lighting import referenced_assets
+    assets.update(referenced_assets(project))
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, 'w', zipfile.ZIP_DEFLATED) as archive:
         snapshot = project_snapshot(project)

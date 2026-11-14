@@ -223,6 +223,8 @@ class Store:
                   for asset in [layer['asset'], layer.get('role_legacy_asset')] if asset}
         from .atlas_workspaces import asset_sizes
         active.update(asset_sizes(project))
+        from .lighting import referenced_assets
+        active.update(referenced_assets(project))
         all_assets = list((self.directory(project_id) / 'assets').glob('*.png'))
         return {
             'active_assets': len(active),

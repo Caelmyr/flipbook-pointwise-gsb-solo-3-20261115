@@ -301,3 +301,96 @@ async function openAtlasWorkspace(identifier){
   body.append(element('h3','另建图集工程'));
   body.append(form([text('name','工程名称','游戏图集'),num('width','图集宽',256,32,2048),num('height','图集高',256,32,2048),num('reserve','每侧原画预留像素',4,0,32),num('padding','图块间隔',1,0,16),num('extrude','边缘外扩',1,0,8),check('rotate','允许旋转')],'创建图集工程',async values=>{await mutate('建立图集工程…',endpoint('atlas-workspaces'),values);await openAtlasWorkspace(project().atlas_workspaces.at(-1).id)}));
 }
+
+$('lighting').onclick=guard(()=>openLighting());
+let L=null;
+async function openLighting(frameId){
+  project();if(L&&L.urls)L.urls.forEach(u=>URL.revokeObjectURL(u));
+  const data=await api(endpoint('lighting/status'));
+  L={frameId:frameId||S.frame,settings:data.settings,urls:[],token:0,inflight:false,queued:false,dragging:false};
+  const body=dialog('照明工作区 · 颜色与法线成对编辑');
+  body.append(element('p','法线与合成颜色逐帧配对，也可用一张共用法线复用到全部帧。旋转、镜像与非均匀缩放会按真实表面方向重定向法线向量，而不是只搬动像素；缺失或尺寸不符的配对会明确报错，不会被静默错位；透明区域不接收光照。','hint'));
+  const layout=element('div',undefined,'dialog-grid'),controls=element('div'),output=element('div',undefined,'tool-output');
+  layout.append(controls,output);body.append(layout);
+  const wrap=element('div',undefined,'table-wrap'),table=element('table'),thead=element('thead'),head=element('tr');
+  ['帧','法线配对','校验','已确认'].forEach(h=>head.append(element('th',h)));thead.append(head);table.append(thead);
+  const tbody=element('tbody'),sourceName={frame:'逐帧配对',shared:'共用法线',none:'缺失'};
+  data.frames.forEach((f,i)=>{const tr=element('tr');if(f.frame_id===L.frameId)tr.className='active-row';
+    tr.append(element('td',`${i+1}. ${f.name}`),element('td',sourceName[f.source]),element('td',f.error||'尺寸匹配'),element('td',data.confirmed[f.frame_id]?'✓':'—'));
+    tr.onclick=()=>openLighting(f.frame_id);tbody.append(tr)});
+  table.append(tbody);wrap.append(table);output.append(wrap);
+  const previews=element('div',undefined,'light-previews');
+  for(const [id,caption] of [['lightBefore','变换前受光'],['lightAfter','变换后受光'],['lightNormal','变换后法线']]){
+    const cell=element('div',undefined,'light-cell'),img=element('img');img.id=id;img.alt=caption;cell.append(img,element('small',caption));previews.append(cell)}
+  output.append(previews);
+  const perr=element('p','','form-error');output.append(perr);
+  const verifyBox=element('div');output.append(verifyBox);
+  async function refreshPreviews(){
+    if(L.inflight){L.queued=true;return}
+    L.inflight=true;const token=++L.token;
+    try{
+      for(const [id,view] of [['lightBefore','before'],['lightAfter','after'],['lightNormal','normal']]){
+        const blob=await post(endpoint('lighting/preview'),{frame_id:L.frameId,view,settings:L.settings});
+        if(token!==L.token)return;
+        const img=$(id);if(!img)return;
+        const url=URL.createObjectURL(blob);if(img.dataset.url)URL.revokeObjectURL(img.dataset.url);
+        img.dataset.url=url;img.src=url;L.urls.push(url);
+      }
+      perr.textContent='';
+    }catch(e){perr.textContent=e.message}
+    finally{L.inflight=false;if(L.queued){L.queued=false;refreshPreviews()}}
+  }
+  controls.append(element('h3','法线配对'));
+  const file=element('input');file.type='file';file.accept='image/png';file.setAttribute('aria-label','法线PNG文件');controls.append(file);
+  const upload=async target=>{if(!file.files.length)throw Error('请先选择法线PNG文件');const f=new FormData();f.append('file',file.files[0]);f.append('revision',project().revision);if(target)f.append('frame_id',target);const p=await work('保存法线配对…',()=>api(endpoint('lighting/normals'),{method:'POST',body:f}));await acceptProject(p);status('法线已配对 · 可撤销');await openLighting(L.frameId)};
+  const toFrame=element('button','指定到当前帧'),toShared=element('button','设为共用法线');
+  toFrame.onclick=guard(()=>upload(L.frameId));toShared.onclick=guard(()=>upload(null));
+  const pairActions=element('div',undefined,'inline-actions');pairActions.append(toFrame,toShared);controls.append(pairActions);
+  controls.append(form([num('strength','法线强度',1.5,.05,32),select('gentarget','生成到','frame',[['frame','当前帧'],['shared','共用法线（取当前帧Alpha）']])],'从Alpha生成法线',async values=>{await mutate('生成法线图…',endpoint('lighting/normals/generate'),{strength:values.strength,frame_id:values.gentarget==='frame'?L.frameId:null,source_frame_id:L.frameId});await openLighting(L.frameId)}));
+  const unpair=element('button','移除当前帧配对'),unshared=element('button','移除共用法线');
+  unpair.onclick=guard(async()=>{await mutate('移除法线配对…',endpoint('lighting/normals/remove'),{frame_id:L.frameId});await openLighting(L.frameId)});
+  unshared.onclick=guard(async()=>{await mutate('移除共用法线…',endpoint('lighting/normals/remove'),{});await openLighting(L.frameId)});
+  const removeActions=element('div',undefined,'inline-actions');removeActions.append(unpair,unshared);controls.append(removeActions);
+  controls.append(element('h3','光源（拖动圆盘设置方向）'));
+  const disc=element('canvas');disc.id='lightDisc';disc.width=disc.height=168;disc.setAttribute('aria-label','拖动设置光源方向');
+  const info=element('p','','muted');controls.append(disc,info);
+  function drawDisc(){
+    const ctx=disc.getContext('2d'),r=disc.width/2;
+    ctx.clearRect(0,0,disc.width,disc.height);
+    ctx.fillStyle='#16242f';ctx.beginPath();ctx.arc(r,r,r-1,0,7);ctx.fill();
+    ctx.strokeStyle='#3c5a6e';ctx.stroke();
+    ctx.strokeStyle='#8fb4d830';ctx.beginPath();ctx.arc(r,r,(r-1)/2,0,7);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(r,4);ctx.lineTo(r,disc.height-4);ctx.moveTo(4,r);ctx.lineTo(disc.width-4,r);ctx.stroke();
+    const x=r+L.settings.light.x*(r-6),y=r+L.settings.light.y*(r-6);
+    const glow=ctx.createRadialGradient(x,y,1,x,y,12);glow.addColorStop(0,'#fff3b8');glow.addColorStop(1,'#f8cc6500');
+    ctx.fillStyle=glow;ctx.beginPath();ctx.arc(x,y,12,0,7);ctx.fill();
+    ctx.fillStyle='#ffedaa';ctx.beginPath();ctx.arc(x,y,4.5,0,7);ctx.fill();
+  }
+  const setLight=e=>{const rect=disc.getBoundingClientRect();let x=(e.clientX-rect.left)/rect.width*2-1,y=(e.clientY-rect.top)/rect.height*2-1;const len=Math.hypot(x,y);if(len>1){x/=len;y/=len}
+    L.settings.light={x,y,z:Math.sqrt(Math.max(.09,1-x*x-y*y))};drawDisc();
+    info.textContent=`光源方向 (${x.toFixed(2)}, ${y.toFixed(2)}, ${L.settings.light.z.toFixed(2)}) · 松开保存`;refreshPreviews()};
+  disc.onpointerdown=e=>{e.preventDefault();disc.setPointerCapture(e.pointerId);L.dragging=true;setLight(e)};
+  disc.onpointermove=e=>{if(L.dragging)setLight(e)};
+  disc.onpointerup=guard(async()=>{if(!L.dragging)return;L.dragging=false;await mutate('保存光源方向…',endpoint('lighting/settings'),{light:L.settings.light});await openLighting(L.frameId)});
+  const s=L.settings,t=s.transform;
+  controls.append(element('h3','方向约定与表面变换'));
+  controls.append(form([
+    select('convention','法线方向约定',s.convention,[['opengl','OpenGL · 绿通道向上（Y+）'],['directx','DirectX · 绿通道向下（Y-）']]),
+    num('ambient','环境光 0–1',s.ambient,0,1),
+    num('intensity','光源强度',s.intensity,0,8),
+    text('light_color','光源颜色 #RRGGBBAA',s.light_color),
+    num('rotation','旋转°',t.rotation,-360,360),
+    check('flip_x','水平镜像',t.flip_x),
+    check('flip_y','垂直镜像',t.flip_y),
+    num('scale_x','缩放X（可非均匀）',t.scale_x,.01,8),
+    num('scale_y','缩放Y（可非均匀）',t.scale_y,.01,8),
+  ],'保存约定与变换',async values=>{const{convention,ambient,intensity,light_color,...transform}=values;await mutate('保存照明设置…',endpoint('lighting/settings'),{convention,ambient,intensity,light_color,transform});await openLighting(L.frameId)}));
+  controls.append(element('h3','确认与下载'));
+  const confirmOne=element('button','确认当前帧结果');confirmOne.onclick=guard(async()=>{await mutate('确认照明结果…',endpoint('lighting/confirm'),{frame_ids:[L.frameId]});status('已确认当前帧照明结果');await openLighting(L.frameId)});
+  const confirmAll=element('button','确认勾选帧（未勾选为全部）');confirmAll.onclick=guard(async()=>{await mutate('确认照明结果…',endpoint('lighting/confirm'),{frame_ids:ids()});await openLighting(L.frameId)});
+  const verifyBtn=element('button','核对确认结果可重现');verifyBtn.onclick=guard(async()=>{const result=await work('核对确认结果…',()=>post(endpoint('lighting/verify')));verifyBox.replaceChildren();const card=element('div',undefined,'version-card');card.append(element('h3',result.valid?`全部 ${result.confirmed} 条确认结果可重现`:'存在无法重现的确认结果'));renderData(result.results,card);verifyBox.append(card)});
+  const confirmActions=element('div',undefined,'inline-actions');confirmActions.append(confirmOne,confirmAll,verifyBtn);controls.append(confirmActions);
+  const dl=element('a','↓ 下载颜色+法线配对包（含重现清单）');dl.href=endpoint('lighting/export');dl.download='lighting-pairs.zip';controls.append(element('p'),dl);
+  drawDisc();info.textContent=`光源方向 (${L.settings.light.x.toFixed(2)}, ${L.settings.light.y.toFixed(2)}, ${L.settings.light.z.toFixed(2)})`;
+  await refreshPreviews();
+}
