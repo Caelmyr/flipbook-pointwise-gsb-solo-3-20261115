@@ -239,6 +239,57 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
         data = body()
         return jsonify(layers.ungroup(key, v.revision(data), frame_id, layer_id))
 
+    @api.post('/projects/<key>/frames/<frame_id>/layers/<layer_id>/expand')
+    def expand_group(key, frame_id, layer_id):
+        data = body()
+        return jsonify(layers.expand(key, v.revision(data), frame_id, layer_id))
+
+    @api.post('/projects/<key>/frames/<frame_id>/layers/<layer_id>/group-check')
+    def group_check(key, frame_id, layer_id):
+        """Compare the group render with the same layers expanded in memory.
+
+        The page can present a before/after result without mutating the project:
+        the collapsed stack and the folded children are rendered side by side,
+        with and without the project background, so external-background
+        dependence is visible too.
+        """
+        with store.lock:
+            data = body()
+            project = store.get(key)
+            import numpy as np
+            from .layer_nodes import flatten_to_children, parent_layers, substitute_branch
+            from .layer_tree import render_tree
+            frame = find_frame(project, frame_id)
+            _, group = find_layer(project, frame_id, layer_id)
+            if group.get('kind') != 'group':
+                raise v.Invalid('所选图层不是组合')
+            size = (project['width'], project['height'])
+            use_background = bool(data.get('background'))
+            siblings = parent_layers(frame, layer_id)
+            at = siblings.index(group)
+            placed = siblings[:at] + flatten_to_children(group, size) + siblings[at + 1:]
+            expanded_frame = dict(frame)
+            if siblings is frame['layers']:
+                expanded_frame['layers'] = placed
+            else:
+                expanded_frame['layers'] = substitute_branch(frame['layers'], siblings, placed)
+            backdrop = Image.new('RGBA', size, v.rgba(project['background'])) if use_background else None
+            expanded = render_tree(expanded_frame['layers'], size,
+                                   lambda asset: store.image(project['id'], asset), backdrop)
+            reference = render_frame(store, project, frame_id, background=use_background)
+            image, details = difference(reference, expanded)
+            details.update({
+                'group': layer_id,
+                'frame': frame_id,
+                'background': use_background,
+                'collapsed_bounds': list(reference.getbbox()) if reference.getbbox() else None,
+                'expanded_bounds': list(expanded.getbbox()) if expanded.getbbox() else None,
+                'pixel_identical': bool(np.array_equal(np.asarray(reference), np.asarray(expanded))),
+            })
+            if data.get('image') is True:
+                return image_response(image)
+            return jsonify(details)
+
     @api.post('/projects/<key>/flatten')
     def flatten(key):
         data = body()

@@ -101,7 +101,10 @@ def seamless_frames(store, project_id, revision, body):
         ids = v.frame_ids(body.get('frame_ids'), project)
         for frame_id in ids:
             frame = find_frame(project, frame_id)
-            for layer in frame['layers']:
+            from .layer_nodes import walk_layers
+            for layer in walk_layers(frame['layers']):
+                if layer.get('kind') == 'group':
+                    continue
                 if layer['locked']:
                     raise v.Invalid('边缘融合包含锁定图层')
                 if layer['transform'] != v.transform({}):

@@ -220,7 +220,7 @@ class Store:
     def asset_inventory(self, project_id):
         project = self.get(project_id)
         active = {asset for frame in project['frames'] for layer in walk_layers(frame['layers'])
-                  for asset in [layer['asset'], layer.get('role_legacy_asset')] if asset}
+                  for asset in [layer['asset'], layer.get('role_legacy_asset'), layer.get('mask')] if asset}
         from .atlas_workspaces import asset_sizes
         active.update(asset_sizes(project))
         all_assets = list((self.directory(project_id) / 'assets').glob('*.png'))

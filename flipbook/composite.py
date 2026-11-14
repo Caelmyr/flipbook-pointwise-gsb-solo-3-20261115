@@ -1,29 +1,25 @@
 import io
 import math
 import numpy as np
-from PIL import Image, ImageOps, ImageDraw
+from PIL import Image, ImageDraw
 from . import validate as v
 from .model import find_frame
 
 
 def transform_layer(image, transform, canvas_size):
-    if transform['flip_x']:
-        image = ImageOps.mirror(image)
-    if transform['flip_y']:
-        image = ImageOps.flip(image)
-    width = max(1, int(round(image.width * transform['scale_x'])))
-    height = max(1, int(round(image.height * transform['scale_y'])))
-    if width * height > 16777216:
-        raise v.Invalid('图层变换后的尺寸过大')
-    if image.size != (width, height):
-        image = image.resize((width, height), Image.Resampling.NEAREST)
-    if transform['rotation']:
-        image = image.rotate(-transform['rotation'], resample=Image.Resampling.NEAREST, expand=True)
-    result = Image.new('RGBA', canvas_size)
-    offset_x = transform['x'] + (canvas_size[0] - image.width) // 2
-    offset_y = transform['y'] + (canvas_size[1] - image.height) // 2
-    result.paste(image, (offset_x, offset_y))
-    return result
+    """Place one flat layer on the canvas through the shared rasterizer.
+
+    The same affine sampling is used for group children, so collapsing and
+    expanding a group cannot change a leaf's pixels by switching samplers.
+    """
+    from .transforms import local_matrix, rasterize
+    return rasterize(image, local_matrix(transform, canvas_size), canvas_size)
+
+
+def transform_world(image, matrix, canvas_size):
+    """Rasterize a layer through an explicit world matrix."""
+    from .transforms import rasterize
+    return rasterize(image, matrix, canvas_size)
 
 
 def blend_pixels(backdrop, source, mode='normal', opacity=1):
@@ -66,19 +62,24 @@ def render_frame(store, project, frame_id, background=False):
     output = Image.new('RGBA', size, v.rgba(project['background']) if background else (0, 0, 0, 0))
     if any(layer.get('kind') == 'group' or layer.get('affine') for layer in frame['layers']):
         from .layer_tree import render_tree
-        return render_tree(frame['layers'], size, lambda asset: store.image(project['id'], asset), output)
+        return render_tree(frame['layers'], size,
+                           lambda asset: store.image(project['id'], asset),
+                           output, resolve=lambda layer: display_layer(store, project, layer))
     for layer in frame['layers']:
         if not layer['visible'] or layer['opacity'] <= 0:
             continue
-        from .role_tools import display_image
-        if layer.get('scene_source'):
-            from .composition import render_external
-            image = render_external(store, layer['scene_source'])
-        else:
-            image = display_image(store, project, layer)
+        image = display_layer(store, project, layer)
         transformed = transform_layer(image, layer['transform'], size)
         output = blend_pixels(output, transformed, layer['blend'], layer['opacity'])
     return output
+
+
+def display_layer(store, project, layer):
+    if layer.get('scene_source'):
+        from .composition import render_external
+        return render_external(store, layer['scene_source'])
+    from .role_tools import display_image
+    return display_image(store, project, layer)
 
 
 def onion_skin(store, project, frame_id, previous=1, following=1, opacity=.3):

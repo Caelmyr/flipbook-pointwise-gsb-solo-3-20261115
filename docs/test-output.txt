@@ -10,12 +10,18 @@ test_export_jobs_all_formats (test_workflows.Workflows.test_export_jobs_all_form
 test_flood_fill_stays_inside_shape (test_workflows.Workflows.test_flood_fill_stays_inside_shape) ... ok
 test_geometry_scales_boxes_and_pivots (test_workflows.Workflows.test_geometry_scales_boxes_and_pivots) ... ok
 test_gif_opaque_black_not_reserved_transparency (test_workflows.Workflows.test_gif_opaque_black_not_reserved_transparency) ... ok
+test_group_child_edits_still_change_result_after_expand (test_workflows.Workflows.test_group_child_edits_still_change_result_after_expand) ... ok
+test_group_expand_keeps_pixels_clipped_outside_intermediate_canvas (test_workflows.Workflows.test_group_expand_keeps_pixels_clipped_outside_intermediate_canvas) ... ok
+test_group_rendering_matches_ungrouped_stack_for_every_blend (test_workflows.Workflows.test_group_rendering_matches_ungrouped_stack_for_every_blend) ... ok
+test_group_transform_survives_expand_ungroup_and_reload (test_workflows.Workflows.test_group_transform_survives_expand_ungroup_and_reload) ... ok
 test_layer_duplicate_merge_matches_render (test_workflows.Workflows.test_layer_duplicate_merge_matches_render) ... ok
 test_layer_opacity_and_blending (test_workflows.Workflows.test_layer_opacity_and_blending) ... ok
 test_locked_layer_rejects_and_revision_unchanged (test_workflows.Workflows.test_locked_layer_rejects_and_revision_unchanged) ... ok
 test_matte_and_auto_collision (test_workflows.Workflows.test_matte_and_auto_collision) ... ok
+test_merge_into_group_keeps_blend_backdrop_dependency (test_workflows.Workflows.test_merge_into_group_keeps_blend_backdrop_dependency) ... ok
 test_mirror_drawing_and_erase (test_workflows.Workflows.test_mirror_drawing_and_erase) ... ok
 test_named_versions_restore_fork_compare (test_workflows.Workflows.test_named_versions_restore_fork_compare) ... ok
+test_nested_groups_keep_coordinates_and_compare (test_workflows.Workflows.test_nested_groups_keep_coordinates_and_compare) ... ok
 test_ninepatch_preserves_corners (test_workflows.Workflows.test_ninepatch_preserves_corners) ... ok
 test_palette_extraction_and_mapping (test_workflows.Workflows.test_palette_extraction_and_mapping) ... ok
 test_pencil_draw_and_undo_redo (test_workflows.Workflows.test_pencil_draw_and_undo_redo) ... ok
@@ -29,8 +35,9 @@ test_tilemap_fill_paint_and_export (test_workflows.Workflows.test_tilemap_fill_p
 test_tilemap_reference_blocks_frame_deletion (test_workflows.Workflows.test_tilemap_reference_blocks_frame_deletion) ... ok
 test_time_resample_total_preserved (test_workflows.Workflows.test_time_resample_total_preserved) ... ok
 test_transform_tween_end_state (test_workflows.Workflows.test_transform_tween_end_state) ... ok
+test_transformed_group_blocks_child_pixel_edits_until_expanded (test_workflows.Workflows.test_transformed_group_blocks_child_pixel_edits_until_expanded) ... ok
 
 ----------------------------------------------------------------------
-Ran 31 tests in 1.112s
+Ran 38 tests in 2.115s
 
 OK

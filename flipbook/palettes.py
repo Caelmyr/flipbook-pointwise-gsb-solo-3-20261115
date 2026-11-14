@@ -148,9 +148,12 @@ class Palettes:
         v.choice(dither, '抖动', ['none', 'ordered', 'floyd'])
         with self.store.edit(project_id, revision, '应用共享调色板') as project:
             ids = v.frame_ids(ids, project)
+            from .layer_nodes import walk_layers
             for frame_id in ids:
                 frame = find_frame(project, frame_id)
-                for layer in frame['layers']:
+                for layer in walk_layers(frame['layers']):
+                    if layer.get('kind') == 'group':
+                        continue
                     if layer['locked']:
                         raise v.Invalid('包含锁定图层')
                     from .role_tools import require_ordinary

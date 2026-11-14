@@ -371,5 +371,165 @@ class Workflows(unittest.TestCase):
             another.extensions['jobs'].executor.shutdown(wait=True)
 
 
+    def _stack_project(self, width=40, height=40, background='#3050a0ff'):
+        project = self.new(width, height)
+        project = self.call('PATCH', self.base(project), {'revision': project['revision'], 'background': background})
+        frame = project['frames'][0]
+        project = self.mutate(project, 'frames/' + frame['id'] + '/layers', {'name': '上色'})
+        frame = project['frames'][0]
+        bottom, top = frame['layers'][0]['id'], frame['layers'][1]['id']
+        project = self.mutate(project, f'frames/{frame["id"]}/layers/{bottom}/draw', {
+            'tool': 'rectangle', 'color': '#3366ccff', 'points': [[0, 0], [12, height - 1]], 'filled': True})
+        project = self.mutate(project, f'frames/{frame["id"]}/layers/{top}/draw', {
+            'tool': 'rectangle', 'color': '#ffcc33ff', 'points': [[4, 4], [width - 5, height - 5]], 'filled': True})
+        project = self.mutate(project, f'frames/{frame["id"]}/layers/{top}', {'blend': 'multiply', 'opacity': .85}, 'PATCH')
+        return project, frame['id'], top
+
+    def test_merge_into_group_keeps_blend_backdrop_dependency(self):
+        project, frame_id, top = self._stack_project()
+        before = np.asarray(render_frame(self.store, project, frame_id))
+        with_background = np.asarray(render_frame(self.store, project, frame_id, background=True))
+        self.assertFalse(np.array_equal(before, with_background))
+        project = self.mutate(project, f'frames/{frame_id}/layers/{top}/merge')
+        frame = project['frames'][0]
+        self.assertEqual(len(frame['layers']), 1)
+        self.assertEqual(frame['layers'][0]['kind'], 'group')
+        np.testing.assert_array_equal(before, np.asarray(render_frame(self.store, project, frame_id)))
+        np.testing.assert_array_equal(with_background, np.asarray(render_frame(self.store, project, frame_id, background=True)))
+        project = self.mutate(project, 'undo')
+        project = self.mutate(project, 'redo')
+        np.testing.assert_array_equal(with_background, np.asarray(render_frame(self.store, project, frame_id, background=True)))
+
+    def test_group_transform_survives_expand_ungroup_and_reload(self):
+        for transform in [
+            {'x': 5, 'y': -3},
+            {'scale_x': 1.5, 'scale_y': .75},
+            {'rotation': 33},
+            {'x': 4, 'y': 5, 'rotation': 90, 'scale_x': 1.5, 'scale_y': .5},
+            {'x': -2, 'y': 3, 'rotation': -20, 'scale_x': 2, 'scale_y': 2, 'flip_x': True},
+        ]:
+            project, frame_id, top = self._stack_project()
+            project = self.mutate(project, f'frames/{frame_id}/layers/{top}/merge')
+            group_id = project['frames'][0]['layers'][0]['id']
+            project = self.mutate(project, f'frames/{frame_id}/layers/{group_id}', {'transform': transform}, 'PATCH')
+            grouped_image = np.asarray(render_frame(self.store, project, frame_id, background=True))
+            check = self.call('POST', self.base(project) + f'/frames/{frame_id}/layers/{group_id}/group-check', {'revision': project['revision'], 'background': True})
+            self.assertTrue(check['pixel_identical'])
+            self.assertEqual(check['changed_pixels'], 0)
+            expanded = self.mutate(project, f'frames/{frame_id}/layers/{group_id}/expand')
+            np.testing.assert_array_equal(grouped_image, np.asarray(render_frame(self.store, expanded, frame_id, background=True)))
+            project = self.mutate(expanded, 'undo')
+            ungrouped = self.mutate(project, f'frames/{frame_id}/layers/{group_id}/ungroup')
+            np.testing.assert_array_equal(grouped_image, np.asarray(render_frame(self.store, ungrouped, frame_id, background=True)))
+            persisted = create_app(self.temp.name)
+            try:
+                stored = persisted.extensions['store'].get(project['id'])
+                restored = render_frame(persisted.extensions['store'], stored, frame_id, background=True)
+                np.testing.assert_array_equal(grouped_image, np.asarray(restored))
+            finally:
+                persisted.extensions['jobs'].executor.shutdown(wait=True)
+
+    def test_group_expand_keeps_pixels_clipped_outside_intermediate_canvas(self):
+        project, frame_id, top = self._stack_project()
+        project = self.mutate(project, f'frames/{frame_id}/layers/{top}', {
+            'transform': {'x': 20, 'scale_x': 1.6, 'scale_y': 1.6}}, 'PATCH')
+        project = self.mutate(project, f'frames/{frame_id}/layers/{top}/merge')
+        group_id = project['frames'][0]['layers'][-1]['id']
+        project = self.mutate(project, f'frames/{frame_id}/layers/{group_id}', {'transform': {'x': -20, 'y': 5}}, 'PATCH')
+        rendered = np.asarray(render_frame(self.store, project, frame_id))
+        self.assertGreater(int(np.count_nonzero(rendered[:, :, 3]),), 0)
+        expanded = self.mutate(project, f'frames/{frame_id}/layers/{group_id}/expand')
+        np.testing.assert_array_equal(rendered, np.asarray(render_frame(self.store, expanded, frame_id)))
+
+    def test_group_child_edits_still_change_result_after_expand(self):
+        project, frame_id, top = self._stack_project()
+        project = self.mutate(project, f'frames/{frame_id}/layers/{top}/merge')
+        group_id = project['frames'][0]['layers'][0]['id']
+        project = self.mutate(project, f'frames/{frame_id}/layers/{group_id}', {
+            'transform': {'x': 6, 'y': -4, 'rotation': 25, 'scale_x': 1.4, 'scale_y': .8}}, 'PATCH')
+        before = np.asarray(render_frame(self.store, project, frame_id))
+        expanded = self.mutate(project, f'frames/{frame_id}/layers/{group_id}/expand')
+        children = [layer for layer in expanded['frames'][0]['layers'] if layer.get('kind') != 'group']
+        self.assertTrue(all('affine' in layer for layer in children))
+        target = next(layer for layer in children if layer['name'] == '上色')
+        self.assertEqual(target['blend'], 'multiply')
+        baked = self.mutate(expanded, f'frames/{frame_id}/layers/{target["id"]}/bake')
+        edited = self.mutate(baked, f'frames/{frame_id}/layers/{target["id"]}/draw', {
+            'tool': 'rectangle', 'color': '#ff0000ff', 'points': [[2, 2], [9, 9]], 'filled': True})
+        after = np.asarray(render_frame(self.store, edited, frame_id))
+        self.assertFalse(np.array_equal(before, after))
+        reloaded = create_app(self.temp.name)
+        try:
+            stored = reloaded.extensions['store'].get(project['id'])
+            np.testing.assert_array_equal(after, np.asarray(render_frame(reloaded.extensions['store'], stored, frame_id)))
+        finally:
+            reloaded.extensions['jobs'].executor.shutdown(wait=True)
+
+    def test_nested_groups_keep_coordinates_and_compare(self):
+        project, frame_id, top = self._stack_project()
+        project = self.mutate(project, f'frames/{frame_id}/layers/{top}/merge')
+        inner_id = project['frames'][0]['layers'][-1]['id']
+        project = self.mutate(project, f'frames/{frame_id}/layers', {'name': '底图'})
+        base = project['frames'][0]['layers'][-1]['id']
+        project = self.mutate(project, f'frames/{frame_id}/layers/{base}/draw', {
+            'tool': 'rectangle', 'color': '#22aa44ff', 'points': [[0, 0], [15, 15]], 'filled': True})
+        project = self.mutate(project, f'frames/{frame_id}/layers/{base}', {'blend': 'screen', 'opacity': .6}, 'PATCH')
+        project = self.mutate(project, f'frames/{frame_id}/layers/{base}/merge')
+        outer_id = project['frames'][0]['layers'][-1]['id']
+        self.assertEqual(project['frames'][0]['layers'][0]['kind'], 'group')
+        self.assertEqual(project['frames'][0]['layers'][0]['children'][0]['kind'], 'group')
+        self.assertEqual(project['frames'][0]['layers'][0]['children'][0]['id'], inner_id)
+        project = self.mutate(project, f'frames/{frame_id}/layers/{outer_id}', {
+            'transform': {'x': -2, 'y': 3, 'rotation': -12, 'scale_x': .9, 'scale_y': 1.4, 'flip_x': True}}, 'PATCH')
+        reference = np.asarray(render_frame(self.store, project, frame_id, background=True))
+        for group_id in (outer_id, inner_id):
+            check = self.call('POST', self.base(project) + f'/frames/{frame_id}/layers/{group_id}/group-check', {'revision': project['revision'], 'background': True})
+            self.assertTrue(check['pixel_identical'], check)
+        expanded = self.mutate(project, f'frames/{frame_id}/layers/{outer_id}/expand')
+        np.testing.assert_array_equal(reference, np.asarray(render_frame(self.store, expanded, frame_id, background=True)))
+        nested = next(layer for layer in expanded['frames'][0]['layers'] if layer.get('kind') == 'group')
+        ungrouped = self.mutate(expanded, f'frames/{frame_id}/layers/{nested["id"]}/ungroup')
+        np.testing.assert_array_equal(reference, np.asarray(render_frame(self.store, ungrouped, frame_id, background=True)))
+
+    def test_transformed_group_blocks_child_pixel_edits_until_expanded(self):
+        project, frame_id, top = self._stack_project()
+        project = self.mutate(project, f'frames/{frame_id}/layers/{top}/merge')
+        group_id = project['frames'][0]['layers'][0]['id']
+        child = project['frames'][0]['layers'][0]['children'][1]
+        identity_draw = self.mutate(project, f'frames/{frame_id}/layers/{child["id"]}/draw', {
+            'tool': 'pencil', 'color': '#ff0000ff', 'points': [[4, 4]]})
+        self.assertEqual(identity_draw['revision'], project['revision'] + 1)
+        project = self.mutate(identity_draw, f'frames/{frame_id}/layers/{group_id}', {'transform': {'x': 5, 'rotation': 30, 'scale_x': 1.5, 'scale_y': .6}}, 'PATCH')
+        response = self.client.post(self.base(project) + f'/frames/{frame_id}/layers/{child["id"]}/draw', json={'revision': project['revision'], 'tool': 'pencil', 'points': [[4, 4]]})
+        self.assertEqual(response.status_code, 400)
+        response.close()
+        self.assertEqual(self.store.get(project['id'])['revision'], project['revision'])
+        expanded = self.mutate(project, f'frames/{frame_id}/layers/{group_id}/expand')
+        target = next(layer for layer in expanded['frames'][0]['layers'] if layer['name'] == '上色')
+        baked = self.mutate(expanded, f'frames/{frame_id}/layers/{target["id"]}/bake')
+        drawn = self.mutate(baked, f'frames/{frame_id}/layers/{target["id"]}/draw', {'tool': 'rectangle', 'color': '#ff0000ff', 'points': [[3, 3], [10, 10]], 'filled': True})
+        self.assertEqual(drawn['revision'], baked['revision'] + 1)
+
+    def test_group_rendering_matches_ungrouped_stack_for_every_blend(self):
+        project = self.new(32, 32)
+        frame = project['frames'][0]
+        for index in range(3):
+            project = self.mutate(project, 'frames/' + frame['id'] + '/layers', {'name': f'层{index}'})
+        frame = project['frames'][0]
+        layers = frame['layers']
+        project = self.mutate(project, f'frames/{frame["id"]}/layers/{layers[0]["id"]}/draw', {'tool': 'rectangle', 'color': '#2244aaff', 'points': [[4, 4], [31, 20]], 'filled': True})
+        project = self.mutate(project, f'frames/{frame["id"]}/layers/{layers[1]["id"]}/draw', {'tool': 'rectangle', 'color': '#66cc33ff', 'points': [[12, 8], [27, 27]], 'filled': True})
+        project = self.mutate(project, f'frames/{frame["id"]}/layers/{layers[2]["id"]}/draw', {'tool': 'rectangle', 'color': '#ff33aaff', 'points': [[0, 0], [15, 15]], 'filled': True})
+        project = self.mutate(project, f'frames/{frame["id"]}/layers/{layers[1]["id"]}', {'blend': 'screen', 'opacity': .7}, 'PATCH')
+        flat = np.asarray(render_frame(self.store, project, frame['id']))
+        project = self.mutate(project, f'frames/{frame["id"]}/layers/{layers[2]["id"]}/merge')
+        project = self.mutate(project, f'frames/{frame["id"]}/layers/{project["frames"][0]["layers"][-1]["id"]}/merge')
+        group_id = project['frames'][0]['layers'][-1]['id']
+        grouped = np.asarray(render_frame(self.store, project, frame['id']))
+        np.testing.assert_array_equal(flat, grouped)
+        ungrouped = self.mutate(project, f'frames/{frame["id"]}/layers/{group_id}/ungroup')
+        np.testing.assert_array_equal(flat, np.asarray(render_frame(self.store, ungrouped, frame['id'])))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

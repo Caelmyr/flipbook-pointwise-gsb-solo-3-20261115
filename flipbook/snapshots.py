@@ -88,6 +88,9 @@ class Snapshots:
                         if layer.get('role_legacy_asset'):
                             fallback = self.store.image(project_id, layer['role_legacy_asset'])
                             layer['role_legacy_asset'] = self.store.put_image(created['id'], fallback)
+                        if layer.get('mask'):
+                            mask = self.store.image(project_id, layer['mask'])
+                            layer['mask'] = self.store.put_image(created['id'], mask)
                 from .atlas_workspaces import workspaces
                 for workspace in workspaces(project):
                     for version in workspace['versions']:

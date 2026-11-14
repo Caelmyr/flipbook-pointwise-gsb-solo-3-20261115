@@ -19,27 +19,59 @@ ANCHORS = {
 
 def require_unlocked(project):
     from .role_tools import require_ordinary
+    from .layer_nodes import walk_layers
     for frame in project['frames']:
-        for layer in frame['layers']:
+        for layer in walk_layers(frame['layers']):
             require_ordinary(layer)
     from .cels import require_detached
     for frame in project['frames']:
-        for layer in frame['layers']:
+        for layer in walk_layers(frame['layers']):
             require_detached(layer)
-    if any(layer['locked'] for frame in project['frames'] for layer in frame['layers']):
+    if any(layer['locked'] for frame in project['frames'] for layer in walk_layers(frame['layers'])):
         raise v.Invalid('几何处理包含锁定图层，请先解锁')
 
 
+def expand_groups(store, project):
+    """Flatten every group into its children before whole-canvas geometry.
+
+    Canvas-wide resampling needs every pixel in one coordinate space.  Folding
+    the group matrices into the children first keeps the exact rendered result
+    and leaves normal leaf layers that the existing bake step can handle.
+    """
+    from .layer_nodes import flatten_to_children
+    from .layer_tree import passthrough_group
+    size = (project['width'], project['height'])
+
+    def walk(items, depth=0):
+        if depth > 8:
+            raise v.Invalid('图层组合过深')
+        result = []
+        for node in items:
+            if node.get('kind') == 'group':
+                if not passthrough_group(node):
+                    raise v.Invalid('组合整体透明度、混合模式或遮罩不为默认；请先解组或恢复后再做画布几何操作')
+                result.extend(walk(flatten_to_children(node, size), depth + 1))
+            else:
+                result.append(node)
+        return result
+
+    for frame in project['frames']:
+        frame['layers'] = walk(frame['layers'])
+
+
 def bake_all(store, project):
-    from .composite import transform_layer
+    from .composite import transform_world
+    from .layer_tree import node_matrix
     size = (project['width'], project['height'])
     for frame in project['frames']:
         for layer in frame['layers']:
-            if layer['transform'] == v.transform({}):
+            if layer['transform'] == v.transform({}) and 'affine' not in layer:
                 continue
-            image = transform_layer(store.image(project['id'], layer['asset']), layer['transform'], size)
+            image = transform_world(store.image(project['id'], layer['asset']), node_matrix(layer, size), size)
             layer['asset'] = store.put_image(project['id'], image)
             layer['transform'] = v.transform({})
+            layer.pop('affine', None)
+            layer.pop('cel_id', None)
 
 
 def translate_boxes(frame, dx, dy, width, height):
@@ -61,6 +93,7 @@ def resize_canvas(store, project_id, revision, body):
     interpolation = v.choice(body.get('interpolation', 'nearest'), '插值', ['nearest', 'lanczos'])
     with store.edit(project_id, revision, '画布尺寸调整') as project:
         require_unlocked(project)
+        expand_groups(store, project)
         bake_all(store, project)
         old_w, old_h = project['width'], project['height']
         v.pixel_budget(width, height, sum(len(f['layers']) for f in project['frames']))
@@ -96,6 +129,7 @@ def resize_canvas(store, project_id, revision, body):
 def crop_all(store, project_id, revision, body):
     with store.edit(project_id, revision, '统一裁切动画画布') as project:
         require_unlocked(project)
+        expand_groups(store, project)
         bake_all(store, project)
         rectangle = v.rect(body, project['width'], project['height'])
         x, y, width, height = [rectangle[key] for key in ['x', 'y', 'width', 'height']]
@@ -139,6 +173,7 @@ def align_content(store, project_id, revision, ids, anchor='center'):
     with store.edit(project_id, revision, '按可见内容对齐') as project:
         ids = v.frame_ids(ids, project)
         require_unlocked(project)
+        expand_groups(store, project)
         bake_all(store, project)
         for frame_id in ids:
             frame = find_frame(project, frame_id)
@@ -164,6 +199,7 @@ def rotate_canvas(store, project_id, revision, quarter_turns=1):
     operation = {1: Image.Transpose.ROTATE_270, 2: Image.Transpose.ROTATE_180, 3: Image.Transpose.ROTATE_90}[turns]
     with store.edit(project_id, revision, '旋转动画画布') as project:
         require_unlocked(project)
+        expand_groups(store, project)
         bake_all(store, project)
         for frame in project['frames']:
             for layer in frame['layers']:

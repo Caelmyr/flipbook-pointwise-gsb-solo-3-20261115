@@ -7,14 +7,16 @@ from .drawing import draw, apply_paint, erase_pixels
 
 
 def members(project, cel_id):
-    return [(frame, layer) for frame in project['frames'] for layer in frame['layers']
+    from .layer_nodes import walk_layers
+    return [(frame, layer) for frame in project['frames'] for layer in walk_layers(frame['layers'])
             if layer.get('cel_id') == cel_id]
 
 
 def validate(project):
+    from .layer_nodes import walk_layers
     sources = {}
     for frame in project['frames']:
-        for layer in frame['layers']:
+        for layer in walk_layers(frame['layers']):
             cel = layer.get('cel_id')
             if cel:
                 v.key(cel)

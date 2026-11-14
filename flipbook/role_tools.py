@@ -33,6 +33,10 @@ def validate_entries(value):
 
 
 def display_image(store, project, layer):
+    if layer.get('kind') == 'group':
+        from .layer_tree import render_node_preview
+        return render_node_preview(layer, (project['width'], project['height']),
+                                   lambda asset: store.image(project['id'], asset))
     return store.image(project['id'], layer['asset'])
 
 
@@ -59,8 +63,9 @@ def update_roles(store, key, revision, roles):
         previous = entries(project)
         palette = np.asarray([role['rgb'] for role in previous], dtype=float)
         replacement = {role['id']: role['rgb'] for role in roles}
+        from .layer_nodes import walk_layers
         for frame in project['frames']:
-            for layer in frame['layers']:
+            for layer in walk_layers(frame['layers']):
                 if not layer.get('role_encoding'):
                     continue
                 pixels = np.asarray(store.image(key, layer['asset'])).copy()
@@ -122,5 +127,6 @@ def clear_role(store, project, layer):
 
 
 def summary(store, project):
+    from .layer_nodes import walk_layers
     return [{'frame': frame['name'], 'layer': layer['name'], 'unresolved_visible_pixels': 0}
-            for frame in project['frames'] for layer in frame['layers'] if layer.get('role_encoding')]
+            for frame in project['frames'] for layer in walk_layers(frame['layers']) if layer.get('role_encoding')]

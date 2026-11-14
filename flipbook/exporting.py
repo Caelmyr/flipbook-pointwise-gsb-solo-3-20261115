@@ -156,7 +156,7 @@ def sheet_zip(store, project, body):
 
 def project_bundle(store, project):
     assets = {asset for frame in project['frames'] for layer in walk_layers(frame['layers'])
-              for asset in [layer['asset'], layer.get('role_legacy_asset')] if asset}
+              for asset in [layer['asset'], layer.get('role_legacy_asset'), layer.get('mask')] if asset}
     from .atlas_workspaces import asset_sizes
     assets.update(asset_sizes(project))
     stream = io.BytesIO()

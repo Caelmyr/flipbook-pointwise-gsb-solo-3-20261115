@@ -120,6 +120,21 @@ def public_summary(project):
     }
 
 
+def validate_affine(value):
+    matrix = v.array(value, '组合坐标矩阵', 3)
+    if len(matrix) != 3:
+        raise v.Invalid('组合坐标矩阵需要三行')
+    for row in matrix:
+        cells = v.array(row, '组合坐标矩阵行', 3)
+        if len(cells) != 3:
+            raise v.Invalid('组合坐标矩阵每行需要三个分量')
+        for cell in cells:
+            v.real(cell, '组合坐标矩阵分量')
+    if matrix[2] != [0, 0, 1]:
+        raise v.Invalid('组合坐标矩阵最后一行必须为0 0 1')
+    return matrix
+
+
 def validate_structure(project):
     if 'ink_roles' in project:
         from .role_tools import validate_entries
@@ -151,7 +166,16 @@ def validate_structure(project):
             seen_layers.add(layer_id)
             v.digest(layer.get('asset'))
             v.layer_properties(layer)
-            layer_count += int(layer.get('kind') != 'group')
+            if layer.get('kind') == 'group':
+                v.boolean(layer.get('passthrough', True), '组合穿透')
+                if not isinstance(layer.get('children'), list) or not layer['children']:
+                    raise v.Invalid('图层组合必须包含子层')
+            else:
+                layer_count += 1
+            if 'affine' in layer:
+                validate_affine(layer['affine'])
+            if layer.get('mask'):
+                v.digest(layer['mask'])
         pivot = v.array(frame.get('pivot'), '枢轴', 2)
         if len(pivot) != 2:
             raise v.Invalid('枢轴需要两个分量')

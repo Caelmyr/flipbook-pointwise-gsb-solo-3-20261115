@@ -15,9 +15,12 @@ def effect_pipeline(store, project_id, revision, body):
         raise v.Invalid('至少需要一个效果步骤')
     with store.edit(project_id, revision, '批量像素效果链') as project:
         ids = v.frame_ids(body.get('frame_ids'), project)
+        from .layer_nodes import walk_layers
         for frame_id in ids:
             frame = find_frame(project, frame_id)
-            for layer in frame['layers']:
+            for layer in walk_layers(frame['layers']):
+                if layer.get('kind') == 'group':
+                    continue
                 if layer['locked']:
                     raise v.Invalid('效果链包含锁定图层')
                 from .role_tools import require_ordinary
@@ -131,7 +134,8 @@ def temporal_average(store, project_id, revision, body):
         original = deepcopy(project)
         for frame_id in ids:
             frame = find_frame(project, frame_id)
-            if any(layer['locked'] for layer in frame['layers']):
+            from .layer_nodes import walk_layers
+            if any(layer['locked'] for layer in walk_layers(frame['layers'])):
                 raise v.Invalid('帧间平均会合并图层，请先解锁')
             index = original['frames'].index(find_frame(original, frame_id))
             subset = original['frames'][max(0, index - radius):min(len(original['frames']), index + radius + 1)]
