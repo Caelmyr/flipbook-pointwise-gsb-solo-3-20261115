@@ -1,4 +1,4 @@
-逐帧 · Flipbook Studio：28组功能与页面验收
+逐帧 · Flipbook Studio：29组功能与页面验收
 
 准备：进入solo_5，执行docker compose up -d --build，打开http://127.0.0.1:8895。
 顶部“机器人行走”→“打开演示”，得到64×64、12帧、1080ms的动画。涉及批量工具时，可在时间轴勾选帧；不勾选默认使用全部帧。每次写操作都保存到后台，可撤销。
@@ -143,7 +143,12 @@
 操作：APNG/GIF/WebP、PNG序列、项目ZIP、图集及调色板包，提交后看任务状态并下载。取消在当前编码完成后丢弃输出；重试使用当前项目。服务重启保留完成任务，运行中任务标为interrupted。
 后台：jobs.py、exporting.py。
 
+29 动作状态机工作区
+入口：工作区标签“动作状态机”。
+操作：先在时间轴把帧保存为待机/行走/攻击片段，打开工作区后可“按片段名生成示例”或手动新建；状态选择片段、循环或一次性播放、不可打断毫秒和回退状态；切换条件选择来源/目标状态、输入、按下/松开、优先级和暂存窗口，保存后重开页面仍在。开始试演后用定义的按键或页面按钮输入，画面按真实曝光时间播放，日志逐条给出进入状态、帧切换、切换被阻止（含不可打断原因）、暂存过期、一次性结束与自动回退；同刻多条件命中取最高优先级，同级取排序靠前者。可把录制脚本交后台确定性复算并下载脚本JSON。被状态机引用的片段在移除时会被拒绝。
+后台：statemachine.py、api.py、model.py、contracts.py、timeline.py；前端static/state_machine.js。
+
 额外：动画工具箱→时间轴→按时间重新采样，按指定FPS和保持/交叉插值另建项目，总时长保持；不是简单修改每帧时长。来源项目保留。
 
-验证命令：.venv/bin/python -m unittest discover -s tests -v；.venv/bin/python scripts/count_lines.py。
+验证命令：.venv/bin/python -m unittest discover -s tests -v；.venv/bin/python scripts/count_lines.py；node --check static/state_machine.js；PYTHON=.venv/bin/python node scripts/state_machine_parity.js。
 页面可见结果不等于逐一实测所有边界；已实际观察范围见验收记录.txt。

@@ -1,3 +1,13 @@
+test_buffer_expiry_is_deterministic (test_state_machine.StateMachineWorkflows.test_buffer_expiry_is_deterministic) ... ok
+test_engine_rejects_unknown_input_gracefully (test_state_machine.StateMachineWorkflows.test_engine_rejects_unknown_input_gracefully) ... ok
+test_example_build_and_full_audition_reasons (test_state_machine.StateMachineWorkflows.test_example_build_and_full_audition_reasons) ... ok
+test_machine_persists_across_app_restart (test_state_machine.StateMachineWorkflows.test_machine_persists_across_app_restart) ... ok
+test_priority_and_tie_break_are_deterministic (test_state_machine.StateMachineWorkflows.test_priority_and_tie_break_are_deterministic) ... ok
+test_real_exposure_frame_timing_and_fallback (test_state_machine.StateMachineWorkflows.test_real_exposure_frame_timing_and_fallback) ... ok
+test_step_endpoint_matches_scripted_simulation (test_state_machine.StateMachineWorkflows.test_step_endpoint_matches_scripted_simulation) ... ok
+test_undo_redo_and_project_bundle_keep_machine (test_state_machine.StateMachineWorkflows.test_undo_redo_and_project_bundle_keep_machine) ... ok
+test_uninterruptible_buffer_then_retroactively_fires (test_state_machine.StateMachineWorkflows.test_uninterruptible_buffer_then_retroactively_fires) ... ok
+test_validation_rejects_broken_machine_and_blocks_clip_removal (test_state_machine.StateMachineWorkflows.test_validation_rejects_broken_machine_and_blocks_clip_removal) ... ok
 test_all_original_demos (test_workflows.Workflows.test_all_original_demos) ... ok
 test_alpha_bleed_survives_render_and_png_export (test_workflows.Workflows.test_alpha_bleed_survives_render_and_png_export) ... ok
 test_apng_and_gif_decode_frames_duration_transparency (test_workflows.Workflows.test_apng_and_gif_decode_frames_duration_transparency) ... ok
@@ -31,6 +41,6 @@ test_time_resample_total_preserved (test_workflows.Workflows.test_time_resample_
 test_transform_tween_end_state (test_workflows.Workflows.test_transform_tween_end_state) ... ok
 
 ----------------------------------------------------------------------
-Ran 31 tests in 1.112s
+Ran 41 tests in 1.722s
 
 OK

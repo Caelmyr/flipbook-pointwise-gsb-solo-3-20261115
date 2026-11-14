@@ -154,6 +154,9 @@ class Timeline:
             clip = next((c for c in project['clips'] if c['id'] == clip_id), None)
             if clip is None:
                 raise v.Invalid('片段不存在')
+            from .statemachine import used_clips
+            if clip_id in used_clips(project):
+                raise v.Invalid('该片段正被动作状态机引用，请先在动作状态机工作区调整状态后再移除')
             project['clips'].remove(clip)
         return self.store.get(project_id)
 

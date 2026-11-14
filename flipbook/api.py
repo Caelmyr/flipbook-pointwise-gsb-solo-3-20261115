@@ -45,6 +45,13 @@ def selected(data, project):
     return data.get('frame_ids', [f['id'] for f in project['frames']])
 
 
+def _state_frame_path(project, runtime):
+    frame_id = runtime.get('frame_id')
+    if frame_id and any(frame['id'] == frame_id for frame in project['frames']):
+        return f"/api/projects/{project['id']}/frames/{frame_id}/image"
+    return None
+
+
 def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes):
     api = Blueprint('api', __name__, url_prefix='/api')
 
@@ -198,6 +205,78 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
     def remove_clip(key, clip_id):
         data = body()
         return jsonify(timeline.remove_clip(key, v.revision(data), clip_id))
+
+    @api.get('/projects/<key>/state-machines')
+    def state_machine_list(key):
+        from . import statemachine as sm
+        with store.lock:
+            project = store.get(key)
+            machines = project.get('state_machines', [])
+            return jsonify({'machines': machines, 'schedules': [
+                {'id': machine['id'], 'states': sm.schedules(project, machine)} for machine in machines]})
+
+    @api.put('/projects/<key>/state-machines')
+    def state_machine_create(key):
+        from . import statemachine as sm
+        data = body()
+        project, machine = sm.save(store, key, v.revision(data), data.get('machine', data))
+        return jsonify({'project': project, 'machine': machine,
+                        'schedule': sm.schedules(project, machine)}), 201
+
+    @api.put('/projects/<key>/state-machines/<identifier>')
+    def state_machine_update(key, identifier):
+        from . import statemachine as sm
+        data = body()
+        project, machine = sm.save(store, key, v.revision(data), data.get('machine', data), identifier)
+        return jsonify({'project': project, 'machine': machine,
+                        'schedule': sm.schedules(project, machine)})
+
+    @api.delete('/projects/<key>/state-machines/<identifier>')
+    def state_machine_delete(key, identifier):
+        from . import statemachine as sm
+        data = body()
+        return jsonify(sm.delete(store, key, v.revision(data), identifier))
+
+    @api.get('/projects/<key>/state-machines/<identifier>/schedules')
+    def state_machine_schedules(key, identifier):
+        from . import statemachine as sm
+        with store.lock:
+            project = store.get(key)
+            machine = next((item for item in project.get('state_machines', []) if item['id'] == identifier), None)
+            if machine is None:
+                raise v.Invalid('动作状态机不存在')
+            return jsonify(sm.schedules(project, machine))
+
+    @api.post('/projects/<key>/state-machines/<identifier>/step')
+    def state_machine_step(key, identifier):
+        from . import statemachine as sm
+        data = body()
+        with store.lock:
+            project = store.get(key)
+            machine = next((item for item in project.get('state_machines', []) if item['id'] == identifier), None)
+            if machine is None:
+                raise v.Invalid('动作状态机不存在')
+            runtime = sm.step(machine, data.get('runtime') or sm.initial_runtime(machine), project,
+                              data.get('dt_ms', 0), data.get('events', []))
+            return jsonify({'runtime': runtime, 'frame_image': _state_frame_path(project, runtime)})
+
+    @api.post('/projects/<key>/state-machines/<identifier>/simulate')
+    def state_machine_simulate(key, identifier):
+        from . import statemachine as sm
+        data = body()
+        with store.lock:
+            project = store.get(key)
+            machine = next((item for item in project.get('state_machines', []) if item['id'] == identifier), None)
+            if machine is None:
+                raise v.Invalid('动作状态机不存在')
+            runtime = sm.simulate(machine, project, data)
+            return jsonify({'runtime': runtime, 'frame_image': _state_frame_path(project, runtime)})
+
+    @api.post('/projects/<key>/state-machines/example')
+    def state_machine_example(key):
+        from . import statemachine as sm
+        with store.lock:
+            return jsonify(sm.example_machine(store.get(key)))
 
     @api.post('/projects/<key>/frames/<frame_id>/layers')
     def add_layer(key, frame_id):

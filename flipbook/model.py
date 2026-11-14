@@ -160,6 +160,8 @@ def validate_structure(project):
     v.pixel_budget(width, height, layer_count)
     from .cels import validate as validate_cels
     validate_cels(project)
+    from .statemachine import validate_document as validate_state_machines
+    validate_state_machines(project)
     from .contracts import validate_document
     validate_document(project)
     return project
