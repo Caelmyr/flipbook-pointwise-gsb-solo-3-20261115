@@ -1,3 +1,16 @@
+test_blocks_bounds_and_broken_history (test_playtest.PlaytestWorkflows.test_blocks_bounds_and_broken_history) ... ok
+test_config_save_persist_undo_and_tiles_untouched (test_playtest.PlaytestWorkflows.test_config_save_persist_undo_and_tiles_untouched) ... ok
+test_config_validation_errors (test_playtest.PlaytestWorkflows.test_config_validation_errors) ... ok
+test_fingerprint_tracks_config_and_undo (test_playtest.PlaytestWorkflows.test_fingerprint_tracks_config_and_undo) ... ok
+test_incomplete_analysis_not_reported_as_unsolvable (test_playtest.PlaytestWorkflows.test_incomplete_analysis_not_reported_as_unsolvable) ... ok
+test_key_pickup_once_and_door_consumes (test_playtest.PlaytestWorkflows.test_key_pickup_once_and_door_consumes) ... ok
+test_moves_from_won_state_rejected (test_playtest.PlaytestWorkflows.test_moves_from_won_state_rejected) ... ok
+test_oneway_restricts_both_directions (test_playtest.PlaytestWorkflows.test_oneway_restricts_both_directions) ... ok
+test_route_replay_matches_manual_rules (test_playtest.PlaytestWorkflows.test_route_replay_matches_manual_rules) ... ok
+test_same_cell_different_state_not_merged (test_playtest.PlaytestWorkflows.test_same_cell_different_state_not_merged) ... ok
+test_simulate_requires_start_and_exit (test_playtest.PlaytestWorkflows.test_simulate_requires_start_and_exit) ... ok
+test_switch_toggles_gate_and_retoggle (test_playtest.PlaytestWorkflows.test_switch_toggles_gate_and_retoggle) ... ok
+test_unreachable_vs_softlock_and_choices_on_map (test_playtest.PlaytestWorkflows.test_unreachable_vs_softlock_and_choices_on_map) ... ok
 test_all_original_demos (test_workflows.Workflows.test_all_original_demos) ... ok
 test_alpha_bleed_survives_render_and_png_export (test_workflows.Workflows.test_alpha_bleed_survives_render_and_png_export) ... ok
 test_apng_and_gif_decode_frames_duration_transparency (test_workflows.Workflows.test_apng_and_gif_decode_frames_duration_transparency) ... ok
@@ -31,6 +44,6 @@ test_time_resample_total_preserved (test_workflows.Workflows.test_time_resample_
 test_transform_tween_end_state (test_workflows.Workflows.test_transform_tween_end_state) ... ok
 
 ----------------------------------------------------------------------
-Ran 31 tests in 1.112s
+Ran 44 tests in 1.558s
 
 OK

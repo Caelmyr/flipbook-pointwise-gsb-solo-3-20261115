@@ -598,6 +598,24 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
         with store.lock:
             return download(tiled_bundle(store, tilemaps, store.get(key), map_id), 'tilemap.zip', 'application/zip')
 
+    @api.put('/projects/<key>/maps/<map_id>/playtest')
+    def save_playtest(key, map_id):
+        from .playtest import save_config
+        data = body()
+        return jsonify(save_config(store, key, v.revision(data), map_id, data))
+
+    @api.post('/projects/<key>/maps/<map_id>/playtest/simulate')
+    def simulate_playtest(key, map_id):
+        from .playtest import simulate_moves
+        with store.lock:
+            return jsonify(simulate_moves(store.get(key), map_id, body()))
+
+    @api.post('/projects/<key>/maps/<map_id>/playtest/analyze')
+    def analyze_playtest(key, map_id):
+        from .playtest import analyze_moves
+        with store.lock:
+            return jsonify(analyze_moves(store.get(key), map_id, body()))
+
     @api.post('/projects/<key>/matte')
     def matte(key):
         from .matting import matte_layers

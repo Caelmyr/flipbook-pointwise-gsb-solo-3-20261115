@@ -22,7 +22,7 @@ function stopPlayback(){S.play=false;if(playRAF)cancelAnimationFrame(playRAF);pl
 async function work(message,fn){if(S.busy)throw Error('当前操作进行中，请稍候');stopPlayback();S.busy=true;document.body.classList.add('busy');status(message);try{return await fn()}finally{S.busy=false;document.body.classList.remove('busy')}}
 async function mutate(message,path,data={},method='POST'){return work(message,async()=>{const result=await post(path,{...data,revision:project().revision},method);await acceptProject(result);status('已保存 · 可撤销');return result})}
 function dialog(title){if(mapTimer){clearInterval(mapTimer);mapTimer=null}if(jobTimer){clearInterval(jobTimer);jobTimer=null}if(previewURL){URL.revokeObjectURL(previewURL);previewURL=null}$('dialogTitle').textContent=title;$('dialogBody').replaceChildren();if(!$('dialog').open)$('dialog').showModal();return $('dialogBody')}
-$('closeDialog').onclick=()=>$('dialog').close();$('dialog').addEventListener('close',()=>{if(mapTimer){clearInterval(mapTimer);mapTimer=null}if(jobTimer)clearInterval(jobTimer);jobTimer=null});
+$('closeDialog').onclick=()=>$('dialog').close();$('dialog').addEventListener('close',()=>{if(mapTimer){clearInterval(mapTimer);mapTimer=null}if(jobTimer)clearInterval(jobTimer);jobTimer=null;$('dialog').onkeydown=null});
 function field(def,value){
   const wrapper=element('label',def.label);let input;
   if(def.type==='select'||def.type==='frame'){input=element('select');for(const o of (def.type==='frame'?frameChoices().map(c=>({value:c[0],label:c[1]})):def.options)){const option=element('option',o.label);option.value=o.value;input.append(option)}}
@@ -204,7 +204,7 @@ async function openMaps(mapId=null){
   const mapCanvas=element('canvas');mapCanvas.id='mapCanvas';const view=element('div',undefined,'map-viewport');view.append(mapCanvas);right.append(view);const ctx=mapCanvas.getContext('2d');let renderToken=0;async function refresh(){const token=++renderToken;map=project().tilemaps.find(m=>m.id===map.id);const image=new Image();image.onload=()=>{if(token!==renderToken)return;mapCanvas.width=image.naturalWidth;mapCanvas.height=image.naturalHeight;ctx.imageSmoothingEnabled=false;ctx.clearRect(0,0,mapCanvas.width,mapCanvas.height);ctx.drawImage(image,0,0);ctx.strokeStyle='#e0edff35';for(let x=0;x<mapCanvas.width;x+=map.tile_width){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,mapCanvas.height);ctx.stroke()}for(let y=0;y<mapCanvas.height;y+=map.tile_height){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(mapCanvas.width,y);ctx.stroke()}};image.src=endpoint(`maps/${map.id}/image`)+`?rev=${project().revision}&time_ms=${Number(timeInput.value)}&export_preview=${exportToggle.checked}`}
   mapCanvas.onclick=guard(async e=>{if(exportToggle.checked)throw Error('导出资源预览只读，请切回实时地图绘制');const rect=mapCanvas.getBoundingClientRect();const x=Math.floor((e.clientX-rect.left)/rect.width*map.columns),y=Math.floor((e.clientY-rect.top)/rect.height*map.rows);await mutate('保存地图格子…',endpoint(`maps/${map.id}/paint`),{layer_id:layerId,tile,cells:[[x,y]],phase_ms:Number(phaseInput.value),flip_x:flipX.checked,flip_y:flipY.checked});await refresh()});
   controls.append(form([select('mode','填充模式','checker',[['solid','纯色瓦片'],['checker','棋盘'],['random','固定种子随机'],['border','边框']]),num('first','第一瓦片编号',1,0,map.tiles.length),num('second','第二瓦片编号',Math.min(2,map.tiles.length),0,map.tiles.length),num('seed','随机种子',42,0,1000000)],'填充地图第一层',async data=>{await mutate('填充地图…',endpoint(`maps/${map.id}/fill`),data);await refresh()}));
-  const add=element('button','＋ 地图图层');add.onclick=guard(async()=>{await mutate('添加地图图层…',endpoint(`maps/${map.id}/layers`),{name:'新地图层'});await openMaps(map.id)});const del=element('button','移除此地图（可撤销）');del.onclick=guard(async()=>{await mutate('移除地图…',endpoint(`maps/${map.id}`),{},'DELETE');await openMaps()});controls.append(add,element('p'),del);const exportLink=element('a','↓ 下载地图与瓦片ZIP');exportLink.href=endpoint(`maps/${map.id}/export`);right.append(element('p'),exportLink);layout.append(controls,right);body.append(layout);await refresh();
+  const add=element('button','＋ 地图图层');add.onclick=guard(async()=>{await mutate('添加地图图层…',endpoint(`maps/${map.id}/layers`),{name:'新地图层'});await openMaps(map.id)});const del=element('button','移除此地图（可撤销）');del.onclick=guard(async()=>{await mutate('移除地图…',endpoint(`maps/${map.id}`),{},'DELETE');await openMaps()});controls.append(add,element('p'),del);const playtestBtn=element('button','🚩 通关试验工作区');playtestBtn.onclick=guard(()=>openPlaytest(map.id));controls.append(element('p'),playtestBtn);const exportLink=element('a','↓ 下载地图与瓦片ZIP');exportLink.href=endpoint(`maps/${map.id}/export`);right.append(element('p'),exportLink);layout.append(controls,right);body.append(layout);await refresh();
 }
 async function init(){S.catalog=await api('/api/catalog');await loadProjects()}
 init().catch(error=>status(error.message,true));
@@ -300,4 +300,261 @@ async function openAtlasWorkspace(identifier){
   }
   body.append(element('h3','另建图集工程'));
   body.append(form([text('name','工程名称','游戏图集'),num('width','图集宽',256,32,2048),num('height','图集高',256,32,2048),num('reserve','每侧原画预留像素',4,0,32),num('padding','图块间隔',1,0,16),num('extrude','边缘外扩',1,0,8),check('rotate','允许旋转')],'创建图集工程',async values=>{await mutate('建立图集工程…',endpoint('atlas-workspaces'),values);await openAtlasWorkspace(project().atlas_workspaces.at(-1).id)}));
+}
+
+let PT=null;
+const PT_DIRS=[['up','↑'],['down','↓'],['left','←'],['right','→']];
+const PT_DIR_NAMES={up:'上',down:'下',left:'左',right:'右'};
+const PT_KINDS=[['gold','金'],['silver','银'],['red','红'],['blue','蓝'],['green','绿'],['purple','紫']];
+const PT_KIND_COLORS={gold:'#f8cc65',silver:'#c8d2dc',red:'#f66e67',blue:'#68a5d8',green:'#66c995',purple:'#c39bd3'};
+const PT_KIND_NAMES=Object.fromEntries(PT_KINDS);
+const PT_TOOLS=[['start','起点'],['exit','出口'],['block','阻挡'],['key','钥匙'],['door','门'],['switch','开关'],['gate','闸门'],['oneway','单向'],['erase','擦除']];
+const PT_GATE_COLORS=['#8b9cff','#f58cab','#66e2bd','#f8cc65','#c39bd3','#7fd4e8','#e8a37f','#a0e87f','#e87f7f','#7fa8e8'];
+function playtestMap(){return project().tilemaps.find(m=>m.id===PT.mapId)}
+function playtestConfig(){const map=playtestMap();return map?(map.playtest||{start:null,exit:null,blocks:[],keys:[],doors:[],switches:[],gates:[],oneways:[]}):null}
+async function openPlaytest(mapId){
+  project();
+  if(!PT||PT.mapId!==mapId)PT={mapId,tool:'start',kind:'gold',dir:'right',gateSwitch:null,moves:[],states:[],events:[],fingerprint:null,analysis:null,notice:'',showUnreachable:true,showSoftlock:true,showRoute:true,replaying:false,image:null,imageRev:-1,ui:null};
+  PT.mapId=mapId;
+  const map=playtestMap();
+  if(!map){status('地图不存在',true);return}
+  const cfg=playtestConfig();
+  const body=dialog('通关试验工作区 · '+map.name);
+  body.append(element('p','在地图上标记起点、出口、阻挡、钥匙、门、开关、闸门与单向通道，然后用方向按钮或方向键逐步试走。钥匙只能拾取一次，开门后消耗；门永久开启；踏上开关格即拨动，可反复；单向通道只能沿箭头方向进出。机关随项目保存、可撤销重做，不改动原瓦片画面。','hint'));
+  const layout=element('div',undefined,'map-layout'),controls=element('div'),right=element('div');
+  controls.append(element('p','标记工具（点击地图格放置或移除）','muted'));
+  const toolRow=element('div',undefined,'pt-toolbar');
+  for(const [value,label]of PT_TOOLS){const b=element('button',label);b.classList.toggle('primary',PT.tool===value);b.onclick=()=>{PT.tool=value;openPlaytest(mapId)};toolRow.append(b)}
+  controls.append(toolRow);
+  const kindRow=element('div',undefined,'pt-toolbar');
+  kindRow.append(element('span','钥匙 / 门种类','pt-label'));
+  for(const [value,label]of PT_KINDS){const b=element('button',label,'pt-kind');b.style.background=PT_KIND_COLORS[value];b.classList.toggle('active',PT.kind===value);b.title=label+'钥匙';b.onclick=()=>{PT.kind=value;openPlaytest(mapId)};kindRow.append(b)}
+  controls.append(kindRow);
+  const dirRow=element('div',undefined,'pt-toolbar');
+  dirRow.append(element('span','单向方向','pt-label'));
+  for(const [value,label]of PT_DIRS){const b=element('button',label);b.title='单向'+PT_DIR_NAMES[value];b.classList.toggle('primary',PT.dir===value);b.onclick=()=>{PT.dir=value;openPlaytest(mapId)};dirRow.append(b)}
+  controls.append(dirRow);
+  controls.append(element('p','开关（踏上即拨动；新闸门由“闸门用”选中的开关控制）','muted'));
+  const switchBox=element('div');controls.append(switchBox);
+  const mechRow=element('div',undefined,'pt-toolbar');
+  const undoBtn=element('button','↶ 撤销机关修改');undoBtn.disabled=!project().undo.length;
+  undoBtn.onclick=guard(async()=>{if(PT.replaying)return;await mutate('撤销机关修改…',endpoint('undo'));await openPlaytest(mapId)});
+  const redoBtn=element('button','↷ 重做');redoBtn.disabled=!project().redo.length;
+  redoBtn.onclick=guard(async()=>{if(PT.replaying)return;await mutate('重做…',endpoint('redo'));await openPlaytest(mapId)});
+  mechRow.append(undoBtn,redoBtn);controls.append(mechRow);
+  controls.append(element('p','试走（回放与手动遵守同一套规则）','muted'));
+  const pad=element('div',undefined,'pt-pad');
+  for(const [value,label]of PT_DIRS){const b=element('button',label,'pt-move-'+value);b.onclick=guard(()=>playMove(value));pad.append(b)}
+  controls.append(pad);
+  const stepRow=element('div',undefined,'pt-toolbar');
+  const undoMove=element('button','撤销一步');undoMove.onclick=guard(undoPlaytestMove);
+  const reset=element('button','重置到起点');reset.onclick=guard(resetPlaytestMoves);
+  stepRow.append(undoMove,reset);controls.append(stepRow);
+  const stateBox=element('div',undefined,'pt-state');controls.append(stateBox);
+  const logBox=element('div',undefined,'pt-log');controls.append(logBox);
+  const canvas=element('canvas');canvas.id='playtestCanvas';
+  canvas.width=map.columns*map.tile_width;canvas.height=map.rows*map.tile_height;
+  canvas.style.width=canvas.width*Math.max(1,Math.min(4,Math.floor(460/Math.max(1,canvas.width))))+'px';
+  const view=element('div',undefined,'map-viewport');view.append(canvas);right.append(view);
+  const noticeBox=element('div');right.append(noticeBox);
+  const anaRow=element('div',undefined,'pt-toolbar');
+  const run=element('button','分析通关性','primary');run.onclick=guard(runPlaytestAnalysis);anaRow.append(run);
+  for(const [key,label]of [['showUnreachable','不可达区域'],['showSoftlock','软锁标记'],['showRoute','路线']]){const l=element('label',undefined,'check');const c=element('input');c.type='checkbox';c.checked=PT[key];c.onchange=()=>{PT[key]=c.checked;drawPlaytest()};l.append(c,document.createTextNode(' '+label));anaRow.append(l)}
+  right.append(anaRow);
+  const analysisBox=element('div');right.append(analysisBox);
+  layout.append(controls,right);body.append(layout);
+  PT.ui={canvas,stateBox,logBox,noticeBox,analysisBox,switchBox};
+  canvas.onclick=guard(async e=>{if(PT.replaying)return;const rect=canvas.getBoundingClientRect();const x=Math.floor((e.clientX-rect.left)/rect.width*map.columns),y=Math.floor((e.clientY-rect.top)/rect.height*map.rows);await applyPlaytestTool(x,y)});
+  $('dialog').onkeydown=e=>{
+    if(!PT||PT.mapId!==mapId||!$('dialog').open)return;
+    if(['INPUT','SELECT','TEXTAREA','BUTTON'].includes(e.target.tagName))return;
+    const dir={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right'}[e.key];
+    if(dir){e.preventDefault();guard(()=>playMove(dir))()}
+  };
+  if(!PT.image||PT.imageRev!==project().revision){
+    const image=new Image();
+    image.onload=()=>{PT.image=image;PT.imageRev=project().revision;drawPlaytest()};
+    image.src=endpoint(`maps/${mapId}/image`)+`?rev=${project().revision}`;
+  }
+  await refreshPlaytest();
+}
+async function applyPlaytestTool(x,y){
+  const map=playtestMap();if(!map)return;
+  const cfg=JSON.parse(JSON.stringify(map.playtest||{start:null,exit:null,blocks:[],keys:[],doors:[],switches:[],gates:[],oneways:[]}));
+  const at=p=>p[0]===x&&p[1]===y;
+  const tool=PT.tool;
+  if(tool==='erase'){
+    cfg.blocks=cfg.blocks.filter(p=>!at(p));cfg.keys=cfg.keys.filter(k=>!at(k.at));cfg.doors=cfg.doors.filter(d=>!at(d.at));
+    const removed=cfg.switches.filter(s=>at(s.at)).map(s=>s.id);
+    cfg.switches=cfg.switches.filter(s=>!at(s.at));
+    cfg.gates=cfg.gates.filter(g=>!at(g.at)&&!removed.includes(g.switch));
+    cfg.oneways=cfg.oneways.filter(o=>!at(o.at));
+    if(cfg.start&&at(cfg.start))cfg.start=null;
+    if(cfg.exit&&at(cfg.exit))cfg.exit=null;
+  }else if(tool==='start')cfg.start=[x,y];
+  else if(tool==='exit')cfg.exit=[x,y];
+  else if(tool==='block'){cfg.blocks.some(at)?cfg.blocks=cfg.blocks.filter(p=>!at(p)):cfg.blocks.push([x,y])}
+  else if(tool==='key'){cfg.keys.some(k=>at(k.at))?cfg.keys=cfg.keys.filter(k=>!at(k.at)):cfg.keys.push({kind:PT.kind,at:[x,y]})}
+  else if(tool==='door'){cfg.doors.some(d=>at(d.at))?cfg.doors=cfg.doors.filter(d=>!at(d.at)):cfg.doors.push({kind:PT.kind,at:[x,y]})}
+  else if(tool==='switch'){
+    if(cfg.switches.some(s=>at(s.at))){const removed=cfg.switches.filter(s=>at(s.at)).map(s=>s.id);cfg.switches=cfg.switches.filter(s=>!at(s.at));cfg.gates=cfg.gates.filter(g=>!removed.includes(g.switch))}
+    else{let n=1;while(cfg.switches.some(s=>s.name==='开关'+n))n++;cfg.switches.push({name:'开关'+n,at:[x,y],on:false})}
+  }else if(tool==='gate'){
+    if(!cfg.switches.length)throw Error('请先放置开关');
+    if(!cfg.switches.some(s=>s.id===PT.gateSwitch))PT.gateSwitch=cfg.switches[cfg.switches.length-1].id;
+    cfg.gates.some(g=>at(g.at))?cfg.gates=cfg.gates.filter(g=>!at(g.at)):cfg.gates.push({switch:PT.gateSwitch,at:[x,y]});
+  }else if(tool==='oneway'){cfg.oneways.some(o=>at(o.at))?cfg.oneways=cfg.oneways.filter(o=>!at(o.at)):cfg.oneways.push({at:[x,y],dir:PT.dir})}
+  await mutate('保存机关设置…',endpoint(`maps/${PT.mapId}/playtest`),{config:cfg},'PUT');
+  await openPlaytest(PT.mapId);
+}
+async function togglePlaytestSwitch(id){
+  if(PT.replaying)return;
+  const cfg=JSON.parse(JSON.stringify(playtestConfig()));
+  const sw=cfg.switches.find(s=>s.id===id);if(!sw)return;
+  sw.on=!sw.on;
+  await mutate('保存开关初始状态…',endpoint(`maps/${PT.mapId}/playtest`),{config:cfg},'PUT');
+  await openPlaytest(PT.mapId);
+}
+async function refreshPlaytest(){
+  const cfg=playtestConfig();if(!cfg)return;
+  if(!cfg.start||!cfg.exit){PT.states=[];PT.events=[];PT.fingerprint=null;PT.notice='标记起点和出口后即可试走与分析';renderPlaytestDynamic();return}
+  const res=await post(endpoint(`maps/${PT.mapId}/playtest/simulate`),{moves:PT.moves});
+  if(res.applied<PT.moves.length){PT.notice=`机关已变化，试走记录在第 ${res.applied+1} 步与当前规则冲突（${res.rejected.reason}），后续 ${PT.moves.length-res.applied} 步已截断`;PT.moves=PT.moves.slice(0,res.applied)}
+  PT.states=res.states;PT.events=res.events;PT.fingerprint=res.fingerprint;
+  renderPlaytestDynamic();
+}
+async function playMove(dir){
+  if(!PT||PT.replaying)return;
+  if(!PT.states.length){status('请先标记起点和出口',true);return}
+  if(PT.states[PT.states.length-1].won){PT.notice='已到达出口，可撤销一步或重置';renderPlaytestDynamic();return}
+  PT.moves.push(dir);
+  try{
+    const res=await post(endpoint(`maps/${PT.mapId}/playtest/simulate`),{moves:PT.moves});
+    if(res.applied<PT.moves.length){PT.moves.pop();PT.notice='无法移动：'+res.rejected.reason}else PT.notice='';
+    PT.states=res.states;PT.events=res.events;PT.fingerprint=res.fingerprint;
+  }catch(error){PT.moves.pop();throw error}
+  renderPlaytestDynamic();
+}
+async function undoPlaytestMove(){if(!PT||PT.replaying||!PT.moves.length)return;PT.moves.pop();await refreshPlaytest()}
+async function resetPlaytestMoves(){if(!PT||PT.replaying)return;PT.moves=[];await refreshPlaytest()}
+async function runPlaytestAnalysis(){
+  if(!PT.states.length)throw Error('请先标记起点和出口');
+  const res=await work('分析通关性…',()=>post(endpoint(`maps/${PT.mapId}/playtest/analyze`),{moves:PT.moves}));
+  if(res.applied<PT.moves.length){PT.moves=PT.moves.slice(0,res.applied);PT.notice='试走记录与当前机关冲突，已在分析前截断'}
+  PT.analysis=res;
+  await refreshPlaytest();
+}
+async function replayPlaytestRoute(){
+  if(!PT.analysis||PT.analysis.fingerprint!==PT.fingerprint||PT.analysis.route.status!=='found')return;
+  PT.replaying=true;renderPlaytestDynamic();
+  try{
+    for(const dir of PT.analysis.route.moves){
+      PT.moves.push(dir);
+      const res=await post(endpoint(`maps/${PT.mapId}/playtest/simulate`),{moves:PT.moves});
+      if(res.applied<PT.moves.length){PT.moves=PT.moves.slice(0,res.applied);PT.states=res.states;PT.events=res.events;PT.fingerprint=res.fingerprint;PT.notice='回放与当前机关冲突，已停止：'+res.rejected.reason;break}
+      PT.states=res.states;PT.events=res.events;PT.fingerprint=res.fingerprint;
+      renderPlaytestDynamic();
+      await new Promise(resolve=>setTimeout(resolve,240));
+    }
+    status('路线回放完成：与手动试走使用同一套规则');
+  }finally{PT.replaying=false;renderPlaytestDynamic()}
+}
+function renderPlaytestDynamic(){
+  if(!PT||!PT.ui)return;
+  const cfg=playtestConfig();
+  if(!cfg)return;
+  const stateBox=PT.ui.stateBox;stateBox.replaceChildren();
+  if(!PT.states.length)stateBox.append(element('p','尚未开始试走','muted'));
+  else{
+    const s=PT.states[PT.states.length-1];
+    const inv=Object.entries(s.inventory).map(([k,n])=>`${PT_KIND_NAMES[k]}钥匙×${n}`).join('、')||'空';
+    const lines=[`位置 (${s.pos[0]}, ${s.pos[1]}) · 已走 ${PT.moves.length} 步`,`背包：${inv}`,`已开门：${s.open_doors.length} / ${cfg.doors.length}`];
+    if(cfg.switches.length)lines.push('开关：'+cfg.switches.map(sw=>`${sw.name}${s.switches[sw.id]?'开':'关'}`).join(' · '));
+    if(s.won)lines.push('🎉 已到达出口，通关！');
+    for(const line of lines)stateBox.append(element('p',line));
+  }
+  const logBox=PT.ui.logBox;logBox.replaceChildren();
+  const items=[];
+  PT.events.forEach((events,i)=>events.forEach(text=>items.push(`第${i+1}步：${text}`)));
+  for(const line of items.slice(-6))logBox.append(element('p',line,'muted'));
+  const noticeBox=PT.ui.noticeBox;noticeBox.replaceChildren();
+  if(PT.notice)noticeBox.append(element('p',PT.notice,'form-error'));
+  renderPlaytestAnalysis();
+  const switchBox=PT.ui.switchBox;switchBox.replaceChildren();
+  if(!cfg.switches.length)switchBox.append(element('p','尚未放置开关','muted'));
+  const current=PT.states.length?PT.states[PT.states.length-1]:null;
+  for(const sw of cfg.switches){
+    const row=element('div',undefined,'pt-switch');
+    const on=current?current.switches[sw.id]:sw.on;
+    row.append(element('span',`${sw.name} (${sw.at[0]},${sw.at[1]}) · 当前${on?'开':'关'}`));
+    const init=element('button','初始'+(sw.on?'开':'关'));init.onclick=guard(()=>togglePlaytestSwitch(sw.id));
+    const pick=element('button','闸门用');pick.title='之后放置的闸门由此开关控制';
+    pick.onclick=()=>{PT.gateSwitch=sw.id;PT.tool='gate';openPlaytest(PT.mapId)};
+    row.append(init,pick);switchBox.append(row);
+  }
+  drawPlaytest();
+}
+function renderPlaytestAnalysis(){
+  const box=PT.ui.analysisBox;box.replaceChildren();
+  const a=PT.analysis;
+  if(!a){box.append(element('p','尚未分析。分析会从当前局面寻找一条可逐步回放的通关路线，并从起点检查全图：哪些格子永远走不到、哪些选择会导致走得到却再也无法通关。','muted'));return}
+  const valid=a.fingerprint===PT.fingerprint;
+  if(!valid)box.append(element('p','机关已修改，以下结论已失效，请重新分析。','form-error'));
+  const r=a.route;
+  const routeLine=element('p');
+  if(r.status==='found')routeLine.textContent=`从当前局面：找到 ${r.steps} 步通关路线（探索 ${r.explored} 个局面）`;
+  else if(r.status==='already_won')routeLine.textContent='从当前局面：已经到达出口';
+  else if(r.status==='impossible')routeLine.textContent=`从当前局面：确认无法通关（探索 ${r.explored} 个局面）`;
+  else routeLine.textContent=`从当前局面：路线搜索超出承受范围（已探索 ${r.explored} 个局面），尚未完成，不能断定无解`;
+  box.append(routeLine);
+  if(valid&&r.status==='found'){const replay=element('button','▶ 回放这条路线');replay.onclick=guard(replayPlaytestRoute);box.append(replay)}
+  const L=a.level;
+  if(!L.complete){box.append(element('p',`全图分析：从起点探索 ${L.explored} 个局面后超出承受范围，分析尚未完成，不能断定无解。`,'form-error'));return}
+  const summary=element('p',undefined,'muted');
+  summary.textContent=`从起点：${L.solvable?'可以通关':'无法通关'} · 可达局面 ${L.reachable_states} · 永远走不到的格子 ${L.unreachable_cells.length} · 软锁局面 ${L.softlock_states} · 导致软锁的选择 ${L.softlock_transition_count} 处`;
+  box.append(summary);
+  if(L.softlock_transition_count>L.softlock_transitions.length)box.append(element('p',`地图上仅标出前 ${L.softlock_transitions.length} 处软锁选择`,'muted'));
+}
+function drawPlaytest(){
+  if(!PT||!PT.ui)return;
+  const map=playtestMap();if(!map)return;
+  const cfg=playtestConfig();
+  const canvas=PT.ui.canvas,ctx=canvas.getContext('2d');
+  const tw=map.tile_width,th=map.tile_height;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.imageSmoothingEnabled=false;
+  if(PT.image)ctx.drawImage(PT.image,0,0);
+  const a=PT.analysis,valid=a&&a.fingerprint===PT.fingerprint;
+  if(valid&&a.level.complete){
+    if(PT.showUnreachable){ctx.fillStyle='rgba(6,8,16,.62)';for(const[x,y]of a.level.unreachable_cells)ctx.fillRect(x*tw,y*th,tw,th)}
+    if(PT.showSoftlock){ctx.fillStyle='rgba(224,64,64,.28)';for(const[x,y]of a.level.doomed_cells)ctx.fillRect(x*tw,y*th,tw,th)}
+  }
+  ctx.strokeStyle='#e0edff35';ctx.lineWidth=1;
+  for(let x=0;x<=map.columns;x++){ctx.beginPath();ctx.moveTo(x*tw+.5,0);ctx.lineTo(x*tw+.5,canvas.height);ctx.stroke()}
+  for(let y=0;y<=map.rows;y++){ctx.beginPath();ctx.moveTo(0,y*th+.5);ctx.lineTo(canvas.width,y*th+.5);ctx.stroke()}
+  ctx.textAlign='center';ctx.textBaseline='middle';ctx.font=`bold ${Math.max(8,Math.floor(th*.55))}px sans-serif`;
+  const mark=(text,x,y,color,bg)=>{if(bg){ctx.fillStyle=bg;ctx.fillRect(x*tw+1,y*th+1,tw-2,th-2)}ctx.fillStyle=color;ctx.fillText(text,x*tw+tw/2,y*th+th/2+1)};
+  if(valid&&PT.showRoute&&a.route.status==='found'&&a.route.positions){ctx.fillStyle='rgba(127,184,255,.85)';for(const[x,y]of a.route.positions){ctx.beginPath();ctx.arc(x*tw+tw/2,y*th+th/2,Math.max(1.5,tw*.09),0,7);ctx.fill()}}
+  for(const[x,y]of cfg.blocks)mark('■',x,y,'#e09090','rgba(80,36,36,.9)');
+  for(const o of cfg.oneways){const[x,y]=o.at,mx=x*tw+tw/2,my=y*th+th/2,r=tw*.3;ctx.fillStyle='#e8d98a';ctx.beginPath();
+    if(o.dir==='up'){ctx.moveTo(mx,my-r);ctx.lineTo(mx-r,my+r);ctx.lineTo(mx+r,my+r)}
+    else if(o.dir==='down'){ctx.moveTo(mx,my+r);ctx.lineTo(mx-r,my-r);ctx.lineTo(mx+r,my-r)}
+    else if(o.dir==='left'){ctx.moveTo(mx-r,my);ctx.lineTo(mx+r,my-r);ctx.lineTo(mx+r,my+r)}
+    else{ctx.moveTo(mx+r,my);ctx.lineTo(mx-r,my-r);ctx.lineTo(mx-r,my+r)}
+    ctx.closePath();ctx.fill()}
+  const current=PT.states.length?PT.states[PT.states.length-1]:null;
+  const switchOrder=cfg.switches.map(s=>s.id);
+  for(const g of cfg.gates){const[x,y]=g.at;const idx=Math.max(0,switchOrder.indexOf(g.switch));const sw=cfg.switches.find(s=>s.id===g.switch);const on=current?current.switches[g.switch]:sw&&sw.on;
+    ctx.globalAlpha=on?.45:.9;mark('闸',x,y,'#ffffff',PT_GATE_COLORS[idx%PT_GATE_COLORS.length]);ctx.globalAlpha=1}
+  for(const d of cfg.doors){const[x,y]=d.at;const opened=current&&current.open_doors.includes(d.id);ctx.globalAlpha=opened?.35:.9;mark('门',x,y,'#10202c',PT_KIND_COLORS[d.kind]);ctx.globalAlpha=1}
+  for(const k of cfg.keys){if(current&&current.collected_keys.includes(k.id))continue;const[x,y]=k.at;mark('钥',x,y,'#10202c',PT_KIND_COLORS[k.kind])}
+  for(const s of cfg.switches){const[x,y]=s.at;const on=current?current.switches[s.id]:s.on;mark('开',x,y,on?'#102c22':'#e8eef2',on?'#66e2bd':'#5a6b78')}
+  if(cfg.start)mark('起',cfg.start[0],cfg.start[1],'#0d2419','#66e2bd');
+  if(cfg.exit)mark('出',cfg.exit[0],cfg.exit[1],'#2c2208','#f8cc65');
+  if(valid&&PT.showSoftlock){ctx.strokeStyle='#ff5f5f';ctx.fillStyle='#ff5f5f';ctx.lineWidth=Math.max(1.5,tw*.08);
+    for(const t of a.level.softlock_transitions){const[x,y]=t.from;const dx={up:0,down:0,left:-1,right:1}[t.direction],dy={up:-1,down:1,left:0,right:0}[t.direction];
+      const sx=x*tw+tw/2,sy=y*th+th/2,ex=sx+dx*tw*.38,ey=sy+dy*th*.38;
+      ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(ex,ey);ctx.stroke();
+      ctx.beginPath();ctx.arc(ex,ey,Math.max(1.5,tw*.1),0,7);ctx.fill()}}
+  if(current){const[px,py]=current.pos;ctx.beginPath();ctx.arc(px*tw+tw/2,py*th+th/2,Math.max(2.5,tw*.22),0,7);ctx.fillStyle=current.won?'#ffe98a':'#ffffff';ctx.fill();ctx.lineWidth=1.5;ctx.strokeStyle='#152437';ctx.stroke()}
 }
