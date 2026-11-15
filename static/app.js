@@ -251,6 +251,7 @@ function renderRoleChoices(){
 }
 $('roleInk').onchange=()=>{const role=project().ink_roles?.find(r=>r.id===Number($('roleInk').value));if(role)$('color').value='#'+role.rgb.map(x=>x.toString(16).padStart(2,'0')).join('')};
 $('roleTools').onclick=guard(openRoleTools);
+$('rigTools').onclick=guard((...args)=>openRig(...args));
 async function openRoleTools(){
   project();const data=await api(endpoint('ink-roles/status'));const body=dialog('角色色墨水与像素归属');
   body.append(element('p','角色色图层使用角色编号决定颜色。两个角色可暂时同色，改色与重排不应合并它们；墨水覆盖度独立于颜色。旧像素没有足够归属依据时，应先明确指定区域。','hint'));

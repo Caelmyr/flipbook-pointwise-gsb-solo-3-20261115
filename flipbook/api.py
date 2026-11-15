@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 from flask import Blueprint, request, jsonify, send_file, Response
@@ -45,7 +46,7 @@ def selected(data, project):
     return data.get('frame_ids', [f['id'] for f in project['frames']])
 
 
-def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes):
+def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes, rig):
     api = Blueprint('api', __name__, url_prefix='/api')
 
     @api.get('/health')
@@ -748,5 +749,52 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
         payload = bundle(store, key, identifier, number)
         return send_file(io.BytesIO(payload), mimetype='application/zip', as_attachment=True,
                          download_name=f'atlas-version-{number}.zip')
+
+    @api.get('/projects/<key>/rig')
+    def rig_state(key):
+        return jsonify(rig.state(key))
+
+    @api.put('/projects/<key>/rig')
+    def rig_save(key):
+        data = body()
+        return jsonify(rig.save(key, v.revision(data), data))
+
+    @api.post('/projects/<key>/rig/auto')
+    def rig_auto(key):
+        data = body()
+        return jsonify(rig.auto(key, v.revision(data), data))
+
+    @api.delete('/projects/<key>/rig')
+    def rig_remove(key):
+        return jsonify(rig.remove(key, v.revision(body())))
+
+    @api.post('/projects/<key>/rig/solve')
+    def rig_solve(key):
+        return jsonify(rig.solve(key, body()))
+
+    @api.post('/projects/<key>/rig/preview')
+    def rig_preview(key):
+        report, image = rig.preview(key, body())
+        stream = io.BytesIO()
+        image.save(stream, format='PNG')
+        return jsonify({
+            'image': 'data:image/png;base64,' + base64.b64encode(stream.getvalue()).decode('ascii'),
+            'report': report,
+        })
+
+    @api.post('/projects/<key>/rig/pose')
+    def rig_pose(key):
+        data = body()
+        return jsonify(rig.apply(key, v.revision(data), data))
+
+    @api.post('/projects/<key>/rig/clear')
+    def rig_clear(key):
+        data = body()
+        return jsonify(rig.clear(key, v.revision(data), data.get('frame_id')))
+
+    @api.post('/projects/<key>/rig/keyframes')
+    def rig_keyframes(key):
+        data = body()
+        return jsonify(rig.keyframes(key, v.revision(data), data))
 
     return api

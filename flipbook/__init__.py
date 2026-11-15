@@ -8,6 +8,7 @@ from .tween import Tween
 from .palettes import Palettes
 from .tilemaps import Tilemaps
 from .jobs import Jobs
+from .rig import Rig
 from .recipes import Recipes
 from .api import create_api
 from .validate import Conflict
@@ -25,10 +26,11 @@ def create_app(data_dir=None):
     palettes = Palettes(store)
     tilemaps = Tilemaps(store)
     jobs = Jobs(store)
+    rig = Rig(store)
     recipes = Recipes(store)
     recipes.ensure_defaults()
-    app.extensions.update(store=store, layers=layers, timeline=timeline, tween=tween, palettes=palettes, tilemaps=tilemaps, jobs=jobs, recipes=recipes)
-    app.register_blueprint(create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes))
+    app.extensions.update(store=store, layers=layers, timeline=timeline, tween=tween, palettes=palettes, tilemaps=tilemaps, jobs=jobs, recipes=recipes, rig=rig)
+    app.register_blueprint(create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes, rig))
 
     @app.get('/')
     def index():

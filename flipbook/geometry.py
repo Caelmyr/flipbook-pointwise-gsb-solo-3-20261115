@@ -90,6 +90,12 @@ def resize_canvas(store, project_id, revision, body):
                 translate_boxes(frame, dx, dy, width, height)
         project['width'], project['height'] = width, height
         project['tilemaps'] = []
+        from .rig import rebase_geometry
+        if mode == 'scale':
+            sx, sy = width / old_w, height / old_h
+            rebase_geometry(project, lambda p: [p[0] * sx, p[1] * sy], (old_w, old_h), (width, height), (sx + sy) / 2)
+        else:
+            rebase_geometry(project, lambda p: [p[0] + dx, p[1] + dy], (old_w, old_h), (width, height))
     return store.get(project_id)
 
 
@@ -110,6 +116,8 @@ def crop_all(store, project_id, revision, body):
             translate_boxes(frame, -x, -y, width, height)
         project['width'], project['height'] = width, height
         project['tilemaps'] = []
+        from .rig import rebase_geometry
+        rebase_geometry(project, lambda p: [p[0] - x, p[1] - y], (old_w, old_h), (width, height))
     return store.get(project_id)
 
 
@@ -175,4 +183,14 @@ def rotate_canvas(store, project_id, revision, quarter_turns=1):
         if turns % 2:
             project['width'], project['height'] = project['height'], project['width']
         project['tilemaps'] = []
+        from .rig import rebase_geometry
+        before_w, before_h = project['width'], project['height']
+        def turn(point):
+            x, y = point
+            if turns == 1:
+                return [before_h - 1 - y, x]
+            if turns == 2:
+                return [before_w - 1 - x, before_h - 1 - y]
+            return [y, before_w - 1 - x]
+        rebase_geometry(project, turn, (before_w, before_h), (project['width'], project['height']), 1.0, 90 * turns)
     return store.get(project_id)

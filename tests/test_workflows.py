@@ -357,6 +357,226 @@ class Workflows(unittest.TestCase):
         self.assertEqual(actual['revision'], project['revision'])
         np.testing.assert_array_equal(original, np.asarray(self.image(actual)))
 
+    def part(self, box, color):
+        image = Image.new('RGBA', (64, 64))
+        ImageDraw.Draw(image).rectangle((box[0], box[1], box[2] - 1, box[3] - 1), fill=color)
+        return image
+
+    def rigged(self):
+        project = self.new(64, 64)
+        frame = project['frames'][0]
+        parts = [('躯干', (26, 20, 38, 44), '#66e2bd'), ('头', (28, 8, 36, 18), '#fa87ac'),
+                 ('左腿', (27, 44, 31, 58), '#f8cc65'), ('右腿', (33, 44, 37, 58), '#8c9bff')]
+        with self.store.lock:
+            with self.store.edit(project['id'], project['revision'], '测试角色分区') as working:
+                working_frame = working['frames'][0]
+                working_frame['layers'] = []
+                for name, box, color in parts:
+                    from flipbook.model import new_layer
+                    working_frame['layers'].append(new_layer(name, self.store.put_image(project['id'], self.part(box, color))))
+            project = self.store.get(project['id'])
+        frame = project['frames'][0]
+        transforms = {item['name']: item['transform'] for item in frame['layers']}
+        bones = [
+            {'id': 'a' * 32, 'name': '根', 'parent': None, 'origin': [32, 54], 'angle': -90, 'length': 18, 'limit_min': -180, 'limit_max': 180, 'target': False},
+            {'id': 'b' * 32, 'name': '躯干', 'parent': 'a' * 32, 'origin': [32, 38], 'angle': -90, 'length': 2, 'limit_min': -60, 'limit_max': 60, 'target': False},
+            {'id': 'c' * 32, 'name': '左腿', 'parent': 'b' * 32, 'origin': [29, 36], 'angle': 90, 'length': 20, 'limit_min': -120, 'limit_max': 120, 'target': True},
+            {'id': 'd' * 32, 'name': '右腿', 'parent': 'b' * 32, 'origin': [35, 36], 'angle': 90, 'length': 20, 'limit_min': -120, 'limit_max': 120, 'target': True},
+        ]
+        bindings = [{'bone': 'b' * 32, 'layer': '躯干', 'bind': transforms['躯干']},
+                    {'bone': 'c' * 32, 'layer': '左腿', 'bind': transforms['左腿']},
+                    {'bone': 'd' * 32, 'layer': '右腿', 'bind': transforms['右腿']}]
+        rig = {'bones': bones, 'root': 'a' * 32, 'created_frame': frame['id'], 'bindings': bindings}
+        project = self.mutate(project, 'rig', {'rig': rig}, 'PUT')
+        return project, bones
+
+    def test_rig_state_and_pose_writes_layer_transforms(self):
+        project, bones = self.rigged()
+        state = self.call('GET', self.base(project) + '/rig')
+        self.assertEqual([item['name'] for item in state['bones']], ['根', '躯干', '左腿', '右腿'])
+        self.assertEqual(state['bindings'][0]['bind'], project['rig']['bindings'][0]['bind'])
+        frame = project['frames'][0]
+        result = self.mutate(project, 'rig/pose', {'frame_id': frame['id'], 'pose': {
+            'rotations': {'c' * 32: 30}, 'root': [3, 0], 'targets': []}})
+        stored = result['project']['frames'][0]
+        self.assertEqual(stored['pose']['rotations'], {'c' * 32: 30})
+        self.assertEqual(stored['pose']['root'], [3.0, 0.0])
+        leg = [item for item in stored['layers'] if item['name'] == '左腿'][0]
+        self.assertNotEqual(leg['transform'], {'x': 0, 'y': 0, 'scale_x': 1, 'scale_y': 1, 'rotation': 0, 'flip_x': False, 'flip_y': False})
+        torso = [item for item in stored['layers'] if item['name'] == '躯干'][0]
+        self.assertEqual(torso['transform']['rotation'], 0)
+
+    def test_rig_identity_pose_keeps_bind_transform(self):
+        project, bones = self.rigged()
+        frame = project['frames'][0]
+        before = frame['layers']
+        result = self.mutate(project, 'rig/pose', {'frame_id': frame['id'], 'pose': {'rotations': {}, 'root': [0, 0], 'targets': []}})
+        after = result['project']['frames'][0]['layers']
+        self.assertEqual([item['transform'] for item in before], [item['transform'] for item in after])
+        moved = self.mutate(result['project'], 'rig/pose', {'frame_id': frame['id'], 'pose': {'rotations': {}, 'root': [4, -2], 'targets': []}})
+        bound = {'躯干', '左腿', '右腿'}
+        before_map = {item['name']: item['transform'] for item in before}
+        after_map = {item['name']: item['transform'] for item in moved['project']['frames'][0]['layers']}
+        for name in bound:
+            self.assertEqual(after_map[name]['x'] - before_map[name]['x'], 4)
+            self.assertEqual(after_map[name]['y'] - before_map[name]['y'], -2)
+        self.assertEqual(after_map['头'], before_map['头'])
+
+    def test_rig_joint_limits_clamp_rotation(self):
+        project, bones = self.rigged()
+        frame = project['frames'][0]
+        report = self.mutate(project, 'rig/solve', {'pose': {'rotations': {'c' * 32: 200}, 'root': [0, 0], 'targets': []}})
+        self.assertEqual(report['requested_rotations'], {'c' * 32: 200})
+        self.assertIn('c' * 32, report['clamped'])
+        leg = [item for item in report['bones'] if item['id'] == 'c' * 32][0]
+        self.assertEqual(leg['delta'], 120)
+
+    def test_rig_unreachable_target_reports_residual(self):
+        project, bones = self.rigged()
+        report = self.mutate(project, 'rig/solve', {'pose': {'rotations': {}, 'root': [0, 0], 'targets': [
+            {'bone': 'c' * 32, 'target': [62, 4]}]}})
+        target = report['targets'][0]
+        self.assertGreater(target['residual'], 5)
+        self.assertNotEqual(target['reached'], target['target'])
+        leg = [item for item in report['bones'] if item['id'] == 'c' * 32][0]
+        self.assertEqual(leg['length'], 20)
+        layer = [item for item in report['layers'] if item['layer'] == '左腿'][0]
+        self.assertEqual(layer['transform']['scale_x'], 1.0)
+        self.assertEqual(layer['transform']['scale_y'], 1.0)
+
+    def test_rig_pinned_foot_stays_with_body_move(self):
+        project, bones = self.rigged()
+        frame = project['frames'][0]
+        report = self.mutate(project, 'rig/solve', {'pose': {'rotations': {}, 'root': [5, 0], 'targets': [
+            {'bone': 'c' * 32, 'pin': True}]}})
+        target = report['targets'][0]
+        self.assertLess(target['residual'], 1.5)
+        self.assertAlmostEqual(target['reached'][1], target['target'][1], delta=1.5)
+
+    def test_rig_pose_is_isolated_per_frame(self):
+        project, bones = self.rigged()
+        first = project['frames'][0]
+        second = self.mutate(project, 'frames', {'after': first['id']})['frames'][1]
+        project = self.store.get(project['id'])
+        untouched = [item['transform'] for item in project['frames'][1]['layers']]
+        posed = self.mutate(project, 'rig/pose', {'frame_id': first['id'], 'pose': {'rotations': {'c' * 32: 25}, 'root': [2, 0], 'targets': []}})
+        self.assertEqual(untouched, [item['transform'] for item in posed['project']['frames'][1]['layers']])
+        second_pose = self.mutate(posed['project'], 'rig/pose', {'frame_id': second['id'], 'pose': {'rotations': {'d' * 32: -25}, 'root': [-2, 0], 'targets': []}})
+        self.assertEqual(posed['project']['frames'][0]['layers'], second_pose['project']['frames'][0]['layers'])
+        self.assertNotEqual(second_pose['project']['frames'][1]['layers'], untouched)
+
+    def test_rig_preview_matches_saved_render(self):
+        import base64
+        import io
+        project, bones = self.rigged()
+        frame = project['frames'][0]
+        pose = {'rotations': {}, 'root': [4, 0], 'targets': [{'bone': 'c' * 32, 'pin': True}]}
+        saved = self.mutate(project, 'rig/pose', {'frame_id': frame['id'], 'pose': pose})
+        stored = saved['project']
+        response = self.client.post(self.base(stored) + '/rig/preview', json={'frame_id': frame['id'], 'pose': stored['frames'][0]['pose']})
+        self.assertEqual(response.status_code, 200, response.json)
+        payload = response.json
+        decoded = Image.open(io.BytesIO(base64.b64decode(payload['image'].split(',', 1)[1]))).convert('RGBA')
+        expected = render_frame(self.store, stored, frame['id'])
+        np.testing.assert_array_equal(np.asarray(decoded), np.asarray(expected))
+        self.assertEqual(payload['report']['layers'], [{'bone': item['bone'], 'layer': item['layer'], 'transform': item['transform']} for item in payload['report']['layers']])
+
+    def test_rig_keyframes_are_editable_and_isolated(self):
+        project, bones = self.rigged()
+        frame = project['frames'][0]
+        poses = [{'rotations': {}, 'root': [0, 0], 'targets': []},
+                 {'rotations': {}, 'root': [6, -2], 'targets': [{'bone': 'c' * 32, 'pin': True}]}]
+        result = self.mutate(project, 'rig/keyframes', {'frame_id': frame['id'], 'poses': poses, 'between': 2, 'duration': 80, 'name': '步态'})
+        names = [item['name'] for item in result['frames']]
+        self.assertEqual(names[1:], ['步态 1/2', '步态 1-1/2', '步态 1-2/2', '步态 2/2'])
+        added = result['frames'][1:]
+        self.assertTrue(all(item['pose'] for item in added))
+        self.assertEqual(added[0]['duration'], 80)
+        self.assertEqual(len({layer['id'] for item in added for layer in item['layers']}), len(added) * len(added[0]['layers']))
+        self.assertEqual(sorted(item['pose']['root'][0] for item in added), [0.0, 2.0, 4.0, 6.0])
+        self.assertEqual([item['transform'] for item in result['frames'][0]['layers']], [item['transform'] for item in project['frames'][0]['layers']])
+        for item in added:
+            rendered = render_frame(self.store, result, item['id'])
+            self.assertIsNotNone(rendered.getbbox())
+
+    def test_rig_clear_restores_binding_pose(self):
+        project, bones = self.rigged()
+        frame = project['frames'][0]
+        original = [item['transform'] for item in frame['layers']]
+        posed = self.mutate(project, 'rig/pose', {'frame_id': frame['id'], 'pose': {'rotations': {'c' * 32: 40}, 'root': [5, 2], 'targets': []}})
+        cleared = self.mutate(posed['project'], 'rig/clear', {'frame_id': frame['id']})
+        self.assertEqual([item['transform'] for item in cleared['frames'][0]['layers']], original)
+        self.assertNotIn('pose', cleared['frames'][0])
+
+    def test_rig_rejects_invalid_hierarchy_and_limits(self):
+        project, bones = self.rigged()
+        base = self.base(project)
+        cyclic = [{'id': 'a' * 32, 'name': 'A', 'parent': 'b' * 32, 'origin': [0, 0], 'angle': 0, 'length': 8},
+                  {'id': 'b' * 32, 'name': 'B', 'parent': 'a' * 32, 'origin': [0, 0], 'angle': 0, 'length': 8}]
+        response = self.client.put(base + '/rig', json={'revision': project['revision'], 'rig': {'bones': cyclic, 'bindings': []}})
+        self.assertEqual(response.status_code, 400)
+        invalid_limits = [{'id': 'a' * 32, 'name': 'A', 'parent': None, 'origin': [0, 0], 'angle': 0, 'length': 8, 'limit_min': 30, 'limit_max': -30}]
+        response = self.client.put(base + '/rig', json={'revision': project['revision'], 'rig': {'bones': invalid_limits, 'bindings': []}})
+        self.assertEqual(response.status_code, 400)
+        response = self.client.post(base + '/rig/solve', json={'pose': {'rotations': {'f' * 32: 10}}})
+        self.assertEqual(response.status_code, 400)
+
+    def test_rig_exports_match_pose_preview(self):
+        import base64
+        import io
+        project, bones = self.rigged()
+        frame = project['frames'][0]
+        posed = self.mutate(project, 'rig/pose', {'frame_id': frame['id'], 'pose': {'rotations': {}, 'root': [3, -1], 'targets': []}})
+        stored = posed['project']
+        data, _ = animated_png(self.store, stored, {})
+        with Image.open(io.BytesIO(data)) as decoded:
+            preview = self.client.post(self.base(stored) + '/rig/preview', json={'frame_id': frame['id'], 'pose': stored['frames'][0]['pose']}).json
+            expected = Image.open(io.BytesIO(base64.b64decode(preview['image'].split(',', 1)[1]))).convert('RGBA')
+            np.testing.assert_array_equal(np.asarray(decoded.convert('RGBA')), np.asarray(expected))
+
+    def test_rig_rebases_on_canvas_geometry(self):
+        project, bones = self.rigged()
+        frame = project['frames'][0]
+        posed = self.mutate(project, 'rig/pose', {'frame_id': frame['id'], 'pose': {'rotations': {'c' * 32: 30}, 'root': [3, 0], 'targets': []}})
+        cropped = self.mutate(posed['project'], 'crop', {'x': 8, 'y': 8, 'width': 40, 'height': 40})
+        self.assertEqual(cropped['rig']['size'], [40, 40])
+        self.assertTrue(all('pose' not in item for item in cropped['frames']))
+        self.assertTrue(all(binding['bind'] == {'x': 0, 'y': 0, 'scale_x': 1, 'scale_y': 1, 'rotation': 0, 'flip_x': False, 'flip_y': False} for binding in cropped['rig']['bindings']))
+        root = [item for item in cropped['rig']['bones'] if item['name'] == '根'][0]
+        self.assertEqual(root['origin'], [24.0, 46.0])
+        scaled = self.mutate(cropped, 'resize', {'mode': 'scale', 'width': 80, 'height': 80})
+        self.assertEqual(scaled['rig']['size'], [80, 80])
+        leg = [item for item in scaled['rig']['bones'] if item['name'] == '左腿'][0]
+        self.assertEqual(leg['length'], 40.0)
+        rotated = self.mutate(scaled, 'rotate', {'turns': 1})
+        self.assertEqual(rotated['rig']['size'], [80, 80])
+        turned = [item for item in rotated['rig']['bones'] if item['name'] == '左腿'][0]
+        self.assertEqual(turned['origin'], [23.0, 42.0])
+        self.assertEqual(turned['angle'], 180.0)
+
+    def test_rig_locked_layer_rejects_pose(self):
+        project, bones = self.rigged()
+        frame = project['frames'][0]
+        leg = [item for item in frame['layers'] if item['name'] == '左腿'][0]
+        locked = self.mutate(project, 'frames/' + frame['id'] + '/layers/' + leg['id'], {'locked': True}, 'PATCH')
+        response = self.client.post(self.base(locked) + '/rig/pose', json={'revision': locked['revision'], 'frame_id': frame['id'], 'pose': {'rotations': {'c' * 32: 30}, 'root': [0, 0], 'targets': []}})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.store.get(locked['id'])['revision'], locked['revision'])
+        unchanged = self.mutate(locked, 'rig/pose', {'frame_id': frame['id'], 'pose': {'rotations': {}, 'root': [0, 0], 'targets': []}})
+        self.assertEqual([item['transform'] for item in unchanged['project']['frames'][0]['layers']],
+                         [item['transform'] for item in project['frames'][0]['layers']])
+
+    def test_rig_removal_keeps_pixels_and_drops_pose(self):
+        project, bones = self.rigged()
+        frame = project['frames'][0]
+        posed = self.mutate(project, 'rig/pose', {'frame_id': frame['id'], 'pose': {'rotations': {'c' * 32: 20}, 'root': [2, 0], 'targets': []}})
+        before = render_frame(self.store, posed['project'], frame['id']).tobytes()
+        removed = self.mutate(posed['project'], 'rig', {}, 'DELETE')
+        self.assertNotIn('rig', removed)
+        self.assertTrue(all('pose' not in item for item in removed['frames']))
+        self.assertEqual(before, render_frame(self.store, removed, frame['id']).tobytes())
+        self.assertEqual(self.client.get(self.base(removed) + '/rig').json['rig'], None)
+
     def test_app_reload_persistence(self):
         project = self.paint(self.new())
         another = create_app(self.temp.name)

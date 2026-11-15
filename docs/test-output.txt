@@ -24,6 +24,20 @@ test_pipeline_atomic_rollback (test_workflows.Workflows.test_pipeline_atomic_rol
 test_project_bundle_roundtrip (test_workflows.Workflows.test_project_bundle_roundtrip) ... ok
 test_retime_preserves_exact_total (test_workflows.Workflows.test_retime_preserves_exact_total) ... ok
 test_revision_conflict_and_invalid_inputs (test_workflows.Workflows.test_revision_conflict_and_invalid_inputs) ... ok
+test_rig_clear_restores_binding_pose (test_workflows.Workflows.test_rig_clear_restores_binding_pose) ... ok
+test_rig_exports_match_pose_preview (test_workflows.Workflows.test_rig_exports_match_pose_preview) ... ok
+test_rig_identity_pose_keeps_bind_transform (test_workflows.Workflows.test_rig_identity_pose_keeps_bind_transform) ... ok
+test_rig_joint_limits_clamp_rotation (test_workflows.Workflows.test_rig_joint_limits_clamp_rotation) ... ok
+test_rig_keyframes_are_editable_and_isolated (test_workflows.Workflows.test_rig_keyframes_are_editable_and_isolated) ... ok
+test_rig_locked_layer_rejects_pose (test_workflows.Workflows.test_rig_locked_layer_rejects_pose) ... ok
+test_rig_pinned_foot_stays_with_body_move (test_workflows.Workflows.test_rig_pinned_foot_stays_with_body_move) ... ok
+test_rig_pose_is_isolated_per_frame (test_workflows.Workflows.test_rig_pose_is_isolated_per_frame) ... ok
+test_rig_preview_matches_saved_render (test_workflows.Workflows.test_rig_preview_matches_saved_render) ... ok
+test_rig_rebases_on_canvas_geometry (test_workflows.Workflows.test_rig_rebases_on_canvas_geometry) ... ok
+test_rig_rejects_invalid_hierarchy_and_limits (test_workflows.Workflows.test_rig_rejects_invalid_hierarchy_and_limits) ... ok
+test_rig_removal_keeps_pixels_and_drops_pose (test_workflows.Workflows.test_rig_removal_keeps_pixels_and_drops_pose) ... ok
+test_rig_state_and_pose_writes_layer_transforms (test_workflows.Workflows.test_rig_state_and_pose_writes_layer_transforms) ... ok
+test_rig_unreachable_target_reports_residual (test_workflows.Workflows.test_rig_unreachable_target_reports_residual) ... ok
 test_seam_blend_matches_opposite_edges (test_workflows.Workflows.test_seam_blend_matches_opposite_edges) ... ok
 test_tilemap_fill_paint_and_export (test_workflows.Workflows.test_tilemap_fill_paint_and_export) ... ok
 test_tilemap_reference_blocks_frame_deletion (test_workflows.Workflows.test_tilemap_reference_blocks_frame_deletion) ... ok
@@ -31,6 +45,6 @@ test_time_resample_total_preserved (test_workflows.Workflows.test_time_resample_
 test_transform_tween_end_state (test_workflows.Workflows.test_transform_tween_end_state) ... ok
 
 ----------------------------------------------------------------------
-Ran 31 tests in 1.112s
+Ran 45 tests in 1.530s
 
 OK

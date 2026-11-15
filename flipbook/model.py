@@ -158,6 +158,8 @@ def validate_structure(project):
         for component in pivot:
             v.real(component, '枢轴', 0, 1)
     v.pixel_budget(width, height, layer_count)
+    from .rig import validate_project_rig
+    validate_project_rig(project)
     from .cels import validate as validate_cels
     validate_cels(project)
     from .contracts import validate_document
