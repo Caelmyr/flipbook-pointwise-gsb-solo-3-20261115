@@ -1,4 +1,5 @@
 from .layer_nodes import walk_layers
+from . import tileworld as tw_chunks
 from . import validate as v
 
 
@@ -57,12 +58,26 @@ def validate_document(project):
         v.text(tilemap['name'], '地图名称', 100, False)
         from .map_animation import validate_map
         validate_map(project, tilemap)
-        columns = v.integer(tilemap['columns'], '地图列数', 1, 100)
-        rows = v.integer(tilemap['rows'], '地图行数', 1, 100)
+        mode = tilemap.get('mode', 'finite')
+        v.choice(mode, '地图模式', ['finite', 'world'])
         tw = v.integer(tilemap['tile_width'], '瓦片宽度', 8, 256)
         th = v.integer(tilemap['tile_height'], '瓦片高度', 8, 256)
-        if columns * rows * tw * th > 16000000:
-            raise v.Invalid('地图像素预算超限')
+        if mode == 'world':
+            chunk = v.integer(tilemap.get('chunk_size', 16), '区块边长', 8, 64)
+            if chunk * tw * chunk * th > 16000000:
+                raise v.Invalid('地图像素预算超限')
+            if 'columns' in tilemap or 'rows' in tilemap:
+                raise v.Invalid('大世界地图不应带固定行列')
+            origin = tilemap.get('origin', [0, 0])
+            if not isinstance(origin, list) or len(origin) != 2:
+                raise v.Invalid('地图原点无效')
+            v.integer(origin[0], '地图原点X', -1000000, 1000000)
+            v.integer(origin[1], '地图原点Y', -1000000, 1000000)
+        else:
+            columns = v.integer(tilemap['columns'], '地图列数', 1, 100)
+            rows = v.integer(tilemap['rows'], '地图行数', 1, 100)
+            if columns * rows * tw * th > 16000000:
+                raise v.Invalid('地图像素预算超限')
         tiles = v.array(tilemap['tiles'], '瓦片集合', 256)
         if not tiles or any(key not in frame_ids for key in tiles):
             raise v.Invalid('地图引用缺失瓦片帧，请先移除地图或调整瓦片')
@@ -70,6 +85,8 @@ def validate_document(project):
         layers = v.array(tilemap['layers'], '地图图层', 8)
         if not layers:
             raise v.Invalid('地图至少一层')
+        total_cells = 0
+        total_chunks = 0
         for layer in layers:
             layer_id = v.key(layer['id'])
             if layer_id in layer_ids:
@@ -77,16 +94,45 @@ def validate_document(project):
             layer_ids.add(layer_id)
             v.text(layer['name'], '地图图层名称', 100, False)
             v.boolean(layer['visible'], '地图图层显示')
-            data = v.array(layer['data'], '瓦片数据', 10000)
-            if len(data) != columns * rows:
-                raise v.Invalid('瓦片数据数量与地图尺寸不符')
-            for raw in data:
-                raw = v.integer(raw, '瓦片值', 0, 0xFFFFFFFF)
-                if raw & 0x20000000:
-                    raise v.Invalid('当前不支持对角翻转标记')
-                if raw & 0x1FFFFFFF > len(tiles):
-                    raise v.Invalid('瓦片编号超出集合')
+            if mode == 'world':
+                chunks = layer.get('chunks')
+                if not isinstance(chunks, dict):
+                    raise v.Invalid('大世界图层缺少区块数据')
+                size = tilemap['chunk_size']
+                if len(chunks) > 50000:
+                    raise v.Invalid('地图区块过多')
+                total_chunks += len(chunks)
+                for chunk_key, chunk in chunks.items():
+                    cx, cy = tw_chunks.parse_chunk_key(chunk_key)
+                    v.integer(cx, '区块X', -70000, 70000)
+                    v.integer(cy, '区块Y', -70000, 70000)
+                    if not isinstance(chunk, dict) or not chunk or len(chunk) > size * size:
+                        raise v.Invalid('区块内容无效，空区块不应保存')
+                    total_cells += len(chunk)
+                    for local, raw in chunk.items():
+                        v.integer(local, '区块格序号', 0, size * size - 1)
+                        _validate_raw(raw, tiles)
+                if 'data' in layer:
+                    raise v.Invalid('大世界图层不应带定长格子数据')
+            else:
+                data = v.array(layer['data'], '瓦片数据', 10000)
+                if len(data) != columns * rows:
+                    raise v.Invalid('瓦片数据数量与地图尺寸不符')
+                for raw in data:
+                    _validate_raw(raw, tiles)
+        if total_cells > 250000:
+            raise v.Invalid('地图已存储格子上限25万格')
+        if total_chunks > 50000:
+            raise v.Invalid('地图区块过多')
     return project
+
+
+def _validate_raw(raw, tiles):
+    raw = v.integer(raw, '瓦片值', 0, 0xFFFFFFFF)
+    if raw & 0x20000000:
+        raise v.Invalid('当前不支持对角翻转标记')
+    if raw & 0x1FFFFFFF > len(tiles):
+        raise v.Invalid('瓦片编号超出集合')
 
 
 def check_assets(store, project):

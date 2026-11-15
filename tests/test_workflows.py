@@ -266,6 +266,76 @@ class Workflows(unittest.TestCase):
             self.assertEqual(len(metadata['layers'][0]['data']), 12)
             self.assertIn('tiles/1.png', archive.namelist())
 
+    def test_tilemap_world_sparse_paint_undo_region_export(self):
+        project = self.demo('tiles')
+        project = self.mutate(project, 'maps', {'mode': 'world', 'tile_width': 16, 'tile_height': 16, 'chunk_size': 16})
+        tilemap = project['tilemaps'][0]
+        map_id = tilemap['id']
+        self.assertEqual(tilemap['mode'], 'world')
+        self.assertNotIn('columns', tilemap)
+        self.assertEqual(tilemap['layers'][0]['chunks'], {})
+        # 跨负坐标与远处的同一笔会一次保存、一次撤销
+        project = self.mutate(project, f'maps/{map_id}/paint', {'tile': 2, 'cells': [[-40, -7], [500, 900], [-39, -7]], 'flip_y': True})
+        layer = project['tilemaps'][0]['layers'][0]
+        self.assertEqual(len(layer['chunks']), 2)
+        self.assertEqual(sum(len(chunk) for chunk in layer['chunks'].values()), 3)
+        self.assertEqual(project['tilemaps'][0]['layers'][0]['chunks']['-3,-1']['152'], 0x40000002)
+        stats = self.call('GET', self.base(project) + f'/maps/{map_id}/stats')
+        self.assertEqual(stats['stored_cells'], 3)
+        self.assertEqual(stats['used_bounds'], [-40, -7, 541, 908])
+        project = self.call('POST', self.base(project) + '/undo', {'revision': project['revision']})
+        self.assertEqual(project['tilemaps'][0]['layers'][0]['chunks'], {})
+        project = self.call('POST', self.base(project) + '/redo', {'revision': project['revision']})
+        self.assertEqual(sum(len(c) for c in project['tilemaps'][0]['layers'][0]['chunks'].values()), 3)
+        # 只渲染明确可见区域，负坐标区域逐格可复原
+        data = self.call('GET', self.base(project) + f'/maps/{map_id}/image?x=-40&y=-7&width=3&height=1')
+        with Image.open(io.BytesIO(data)) as image:
+            self.assertEqual(image.size, (48, 16))
+            self.assertIsNotNone(image.convert('RGBA').getbbox())
+        far = self.call('GET', self.base(project) + f'/maps/{map_id}/image?x=0&y=0&width=2&height=2')
+        with Image.open(io.BytesIO(far)) as image:
+            self.assertIsNone(image.convert('RGBA').getbbox())
+        # 没有区域时拒绝渲染/导出，不展开整片世界
+        response = self.client.get(self.base(project) + f'/maps/{map_id}/image')
+        self.assertEqual(response.status_code, 400)
+        response.close()
+        response = self.client.get(self.base(project) + f'/maps/{map_id}/export')
+        self.assertEqual(response.status_code, 400)
+        response.close()
+        # 填充必须明确区域，且区域上限生效
+        response = self.client.post(self.base(project) + f'/maps/{map_id}/fill', json={'revision': project['revision'], 'mode': 'solid'})
+        self.assertEqual(response.status_code, 400)
+        response.close()
+        response = self.client.post(self.base(project) + f'/maps/{map_id}/fill', json={'revision': project['revision'], 'mode': 'solid', 'region': [0, 0, 4000, 4000]})
+        self.assertEqual(response.status_code, 400)
+        response.close()
+        project = self.mutate(project, f'maps/{map_id}/fill', {'mode': 'checker', 'first': 1, 'second': 2, 'region': {'x': -2, 'y': -2, 'width': 4, 'height': 3}})
+        stats = self.call('GET', self.base(project) + f'/maps/{map_id}/stats')
+        self.assertEqual(stats['stored_cells'], 3 + 12)
+        bundle = self.call('GET', self.base(project) + f'/maps/{map_id}/export?x=-40&y=-7&width=3&height=1')
+        with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
+            metadata = json.loads(archive.read('map.tmj'))
+            world = json.loads(archive.read('world.json'))
+            self.assertEqual(metadata['layers'][0]['data'], [0x40000002, 0x40000002, 0])
+            self.assertEqual([metadata['width'], metadata['height']], [3, 1])
+            self.assertEqual(world['region'], {'x': -40, 'y': -7, 'width': 3, 'height': 1})
+            self.assertEqual(world['preview_pixel_origin'], [-640, -112])
+            self.assertEqual(world['world_origin'], [0, 0])
+            with Image.open(io.BytesIO(archive.read('preview.png'))) as image:
+                self.assertEqual(image.size, (48, 16))
+                self.assertIsNotNone(image.convert('RGBA').getbbox())
+        # 图层、翻转和旧有限地图继续可用
+        project = self.mutate(project, f'maps/{map_id}/layers', {'name': '上层'})
+        self.assertEqual(len(project['tilemaps'][0]['layers']), 2)
+        self.assertEqual(project['tilemaps'][0]['layers'][1]['chunks'], {})
+        finite = self.demo('tiles')
+        finite = self.mutate(finite, 'maps', {'columns': 2, 'rows': 2, 'tile_width': 16, 'tile_height': 16})
+        finite_id = finite['tilemaps'][0]['id']
+        finite = self.mutate(finite, f'maps/{finite_id}/paint', {'tile': 1, 'cells': [[1, 1]]})
+        self.assertEqual(finite['tilemaps'][0]['layers'][0]['data'], [0, 0, 0, 1])
+        with Image.open(io.BytesIO(self.call('GET', self.base(finite) + f'/maps/{finite_id}/image'))) as image:
+            self.assertEqual(image.size, (32, 32))
+
     def test_tilemap_reference_blocks_frame_deletion(self):
         project = self.demo('tiles')
         project = self.mutate(project, 'maps', {})

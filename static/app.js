@@ -21,8 +21,9 @@ function guard(fn){return async(...args)=>{try{return await fn(...args)}catch(er
 function stopPlayback(){S.play=false;if(playRAF)cancelAnimationFrame(playRAF);playRAF=null;$('play').textContent='▶ 播放';document.querySelectorAll('#layerInspector input,#layerInspector select,#layerInspector button').forEach(e=>e.disabled=false)}
 async function work(message,fn){if(S.busy)throw Error('当前操作进行中，请稍候');stopPlayback();S.busy=true;document.body.classList.add('busy');status(message);try{return await fn()}finally{S.busy=false;document.body.classList.remove('busy')}}
 async function mutate(message,path,data={},method='POST'){return work(message,async()=>{const result=await post(path,{...data,revision:project().revision},method);await acceptProject(result);status('已保存 · 可撤销');return result})}
-function dialog(title){if(mapTimer){clearInterval(mapTimer);mapTimer=null}if(jobTimer){clearInterval(jobTimer);jobTimer=null}if(previewURL){URL.revokeObjectURL(previewURL);previewURL=null}$('dialogTitle').textContent=title;$('dialogBody').replaceChildren();if(!$('dialog').open)$('dialog').showModal();return $('dialogBody')}
-$('closeDialog').onclick=()=>$('dialog').close();$('dialog').addEventListener('close',()=>{if(mapTimer){clearInterval(mapTimer);mapTimer=null}if(jobTimer)clearInterval(jobTimer);jobTimer=null});
+function disposeDialog(){if(mapTimer){clearInterval(mapTimer);mapTimer=null}if(jobTimer){clearInterval(jobTimer);jobTimer=null}if(previewURL){URL.revokeObjectURL(previewURL);previewURL=null}for(const cleanup of S.dialogCleanups||[]){try{cleanup()}catch{}}S.dialogCleanups=[]}
+function dialog(title){disposeDialog();$('dialogTitle').textContent=title;$('dialogBody').replaceChildren();if(!$('dialog').open)$('dialog').showModal();return $('dialogBody')}
+$('closeDialog').onclick=()=>$('dialog').close();$('dialog').addEventListener('close',disposeDialog);
 function field(def,value){
   const wrapper=element('label',def.label);let input;
   if(def.type==='select'||def.type==='frame'){input=element('select');for(const o of (def.type==='frame'?frameChoices().map(c=>({value:c[0],label:c[1]})):def.options)){const option=element('option',o.label);option.value=o.value;input.append(option)}}
@@ -194,18 +195,306 @@ async function openSnapshots(){
 }
 $('maps').onclick=guard(openMaps);
 async function openMaps(mapId=null){
-  project();const body=dialog('瓦片地图编辑器');if(!project().tilemaps.length){body.append(element('p','将当前选中帧作为瓦片集合，可创建关卡草图并导出Tiled JSON与瓦片PNG。未选时使用全部帧。','hint'));body.append(form([text('name','地图名称','我的关卡'),num('columns','地图列数',12,1,100),num('rows','地图行数',8,1,100),num('tile_width','瓦片宽度',Math.min(32,project().width),8,256),num('tile_height','瓦片高度',Math.min(32,project().height),8,256)],'创建地图',async data=>{await mutate('创建瓦片地图…',endpoint('maps'),{...data,tiles:ids()});await openMaps()}));return}
-  let map=project().tilemaps.find(m=>m.id===mapId)||project().tilemaps[0];const layout=element('div',undefined,'map-layout'),controls=element('div'),right=element('div');const chooser=element('select');for(const item of project().tilemaps)chooser.append(new Option(item.name,item.id));chooser.value=map.id;chooser.onchange=()=>openMaps(chooser.value);controls.append(chooser);let tile=1,layerId=map.layers[0].id;const layerSelect=element('select');for(const layer of map.layers)layerSelect.append(new Option(layer.name,layer.id));layerSelect.onchange=()=>layerId=layerSelect.value;controls.append(element('p','当前地图图层','muted'),layerSelect,element('p','点击瓦片，再点击地图格子绘制。','hint'));
-  const tiles=element('div',undefined,'map-tiles');const eraser=element('button','空');eraser.onclick=()=>{tile=0;tiles.querySelectorAll('button').forEach(b=>b.classList.remove('active'));eraser.classList.add('active')};tiles.append(eraser);map.tiles.forEach((id,index)=>{const b=element('button',undefined,index===0?'active':'');const img=element('img');img.src=endpoint(`frames/${id}/image`)+`?rev=${project().revision}`;b.title='瓦片 '+(index+1);b.append(img);b.onclick=()=>{tile=index+1;tiles.querySelectorAll('button').forEach(e=>e.classList.toggle('active',e===b))};tiles.append(b)});controls.append(tiles);const flipX=element('input'),flipY=element('input');flipX.type=flipY.type='checkbox';const fx=element('label',' 水平翻转','check'),fy=element('label',' 垂直翻转','check');fx.prepend(flipX);fy.prepend(flipY);controls.append(fx,fy);
+  const p=project();const body=dialog('瓦片地图编辑器');
+  if(!p.tilemaps.length){
+    body.append(element('p','瓦片来自当前选中帧。大世界地图使用带符号格坐标，只保存实际画过的格子，不需要先划定矩形；也可以创建原来的固定行列地图。','hint'));
+    body.append(form([
+      select('mode','地图模式','world',[['world','大世界（可负坐标、跨区域持续绘制）'],['finite','有限地图（固定行列）']]),
+      text('name','地图名称','我的关卡'),
+      num('tile_width','瓦片宽度',Math.min(32,p.width),8,256),
+      num('tile_height','瓦片高度',Math.min(32,p.height),8,256),
+      num('chunk_size','大世界区块边长',16,8,64),
+      num('columns','有限地图列数',12,1,100),
+      num('rows','有限地图行数',8,1,100),
+    ],'创建地图',async data=>{
+      const payload={name:data.name,tile_width:data.tile_width,tile_height:data.tile_height,tiles:ids(),mode:data.mode};
+      if(data.mode==='world')payload.chunk_size=data.chunk_size;
+      else{payload.columns=data.columns;payload.rows=data.rows}
+      await mutate('创建瓦片地图…',endpoint('maps'),payload);await openMaps()
+    }));return
+  }
+  let map=p.tilemaps.find(m=>m.id===mapId)||p.tilemaps[0];
+  const world=()=>project().tilemaps.find(m=>m.id===map.id).mode==='world';
+
+  const layout=element('div',undefined,'map-layout'),controls=element('div'),right=element('div');
+  const chooser=element('select');chooser.setAttribute('aria-label','选择地图');
+  for(const item of p.tilemaps)chooser.append(new Option(item.name,item.id));
+  chooser.value=map.id;chooser.onchange=()=>openMaps(chooser.value);controls.append(chooser);
+  let layerId=map.layers[0].id;
+  const layerSelect=element('select');for(const layer of map.layers)layerSelect.append(new Option(layer.name,layer.id));
+  layerSelect.onchange=()=>{layerId=layerSelect.value;draw()};
+  controls.append(element('p','当前地图图层','muted'),layerSelect,element('p',world()?'大世界：拖动平移（右键、中键或 Shift+拖动），滚轮缩放，左键按住连续绘制，靠近边缘时自动平移；整笔一次保存、一次撤销，只为画到的格子保存区块。':'有限地图：点击格子绘制；地图保持原有固定行列和整张导出。','hint'));
+
+  let tile=1;const tiles=element('div',undefined,'map-tiles');const eraser=element('button','空');
+  eraser.onclick=()=>{tile=0;tiles.querySelectorAll('button').forEach(b=>b.classList.remove('active'));eraser.classList.add('active')};tiles.append(eraser);
+  map.tiles.forEach((id,index)=>{const b=element('button',undefined,index===0?'active':'');const img=element('img');img.src=endpoint(`frames/${id}/image`)+`?rev=${p.revision}`;b.title='瓦片 '+(index+1);b.append(img);b.onclick=()=>{tile=index+1;tiles.querySelectorAll('button').forEach(e=>e.classList.toggle('active',e===b))};tiles.append(b)});
+  controls.append(tiles);
+  const flipX=element('input'),flipY=element('input');flipX.type=flipY.type='checkbox';
+  const fx=element('label',' 水平翻转','check'),fy=element('label',' 垂直翻转','check');fx.prepend(flipX);fy.prepend(flipY);controls.append(fx,fy);
   const phaseField=field(num('phase_ms','本笔实例相位 ms',0,0,3000000)),phaseInput=phaseField.querySelector('input');controls.append(phaseField);
-  controls.append(element('p','动态瓦片使用无限循环动作片段，每张地图最多64种瓦片与相位组合；相位按毫秒存储，图像文件可复用。','hint'));
-  controls.append(form([num('tile','动态瓦片编号',1,1,map.tiles.length),select('clip_id','循环动作片段','',[['','移除该瓦片的动画'],...project().clips.map(c=>[c.id,c.name])])],'保存动态瓦片',async data=>{await mutate('保存动态瓦片…',endpoint(`maps/${map.id}/animation`),data);await openMaps(map.id)}));
-  const timeField=field(num('map_time','地图预览时间 ms',0,0,1000000000000)),timeInput=timeField.querySelector('input'),exportToggle=element('input'),exportLabel=element('label',' 查看导出资源预览','check');exportToggle.type='checkbox';exportToggle.id='mapExportPreview';exportLabel.prepend(exportToggle);const playMap=element('button','播放地图'),modeLabel=element('p','正在编辑实时地图','hint');right.append(timeField,exportLabel,playMap,modeLabel);timeInput.onchange=()=>refresh();exportToggle.onchange=()=>{modeLabel.textContent=exportToggle.checked?'导出资源预览（只读）':'正在编辑实时地图';refresh()};playMap.onclick=()=>{if(mapTimer){clearInterval(mapTimer);mapTimer=null;playMap.textContent='播放地图';return}const base=Number(timeInput.value),start=performance.now();playMap.textContent='暂停地图';mapTimer=setInterval(()=>{timeInput.value=String(base+Math.floor(performance.now()-start));refresh()},150)};
-  const mapCanvas=element('canvas');mapCanvas.id='mapCanvas';const view=element('div',undefined,'map-viewport');view.append(mapCanvas);right.append(view);const ctx=mapCanvas.getContext('2d');let renderToken=0;async function refresh(){const token=++renderToken;map=project().tilemaps.find(m=>m.id===map.id);const image=new Image();image.onload=()=>{if(token!==renderToken)return;mapCanvas.width=image.naturalWidth;mapCanvas.height=image.naturalHeight;ctx.imageSmoothingEnabled=false;ctx.clearRect(0,0,mapCanvas.width,mapCanvas.height);ctx.drawImage(image,0,0);ctx.strokeStyle='#e0edff35';for(let x=0;x<mapCanvas.width;x+=map.tile_width){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,mapCanvas.height);ctx.stroke()}for(let y=0;y<mapCanvas.height;y+=map.tile_height){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(mapCanvas.width,y);ctx.stroke()}};image.src=endpoint(`maps/${map.id}/image`)+`?rev=${project().revision}&time_ms=${Number(timeInput.value)}&export_preview=${exportToggle.checked}`}
-  mapCanvas.onclick=guard(async e=>{if(exportToggle.checked)throw Error('导出资源预览只读，请切回实时地图绘制');const rect=mapCanvas.getBoundingClientRect();const x=Math.floor((e.clientX-rect.left)/rect.width*map.columns),y=Math.floor((e.clientY-rect.top)/rect.height*map.rows);await mutate('保存地图格子…',endpoint(`maps/${map.id}/paint`),{layer_id:layerId,tile,cells:[[x,y]],phase_ms:Number(phaseInput.value),flip_x:flipX.checked,flip_y:flipY.checked});await refresh()});
-  controls.append(form([select('mode','填充模式','checker',[['solid','纯色瓦片'],['checker','棋盘'],['random','固定种子随机'],['border','边框']]),num('first','第一瓦片编号',1,0,map.tiles.length),num('second','第二瓦片编号',Math.min(2,map.tiles.length),0,map.tiles.length),num('seed','随机种子',42,0,1000000)],'填充地图第一层',async data=>{await mutate('填充地图…',endpoint(`maps/${map.id}/fill`),data);await refresh()}));
-  const add=element('button','＋ 地图图层');add.onclick=guard(async()=>{await mutate('添加地图图层…',endpoint(`maps/${map.id}/layers`),{name:'新地图层'});await openMaps(map.id)});const del=element('button','移除此地图（可撤销）');del.onclick=guard(async()=>{await mutate('移除地图…',endpoint(`maps/${map.id}`),{},'DELETE');await openMaps()});controls.append(add,element('p'),del);const exportLink=element('a','↓ 下载地图与瓦片ZIP');exportLink.href=endpoint(`maps/${map.id}/export`);right.append(element('p'),exportLink);layout.append(controls,right);body.append(layout);await refresh();
+
+  const timeField=field(num('map_time','地图预览时间 ms',0,0,1000000000000)),timeInput=timeField.querySelector('input');right.append(timeField);
+  const exportToggle=element('input'),exportLabel=element('label',' 查看导出资源预览','check');exportToggle.type='checkbox';exportLabel.prepend(exportToggle);
+  const playMap=element('button','播放地图'),modeLabel=element('p','正在编辑实时地图','hint');const timeRow=element('div',undefined,'inline-actions');timeRow.append(exportLabel,playMap);right.append(timeRow,modeLabel);
+  timeInput.onchange=()=>draw();exportToggle.onchange=()=>{modeLabel.textContent=exportToggle.checked?'导出资源预览（只读）':'正在编辑实时地图';draw()};
+  playMap.onclick=()=>{if(mapTimer){clearInterval(mapTimer);mapTimer=null;playMap.textContent='播放地图';return}const base=Number(timeInput.value),start=performance.now();playMap.textContent='暂停地图';mapTimer=setInterval(()=>{timeInput.value=String(base+Math.floor(performance.now()-start));draw()},150)};
+
+  const viewport=element('div',undefined,'map-viewport');const canvas=element('canvas');canvas.id='mapCanvas';const overlay=element('canvas');overlay.id='mapOverlay';viewport.append(canvas,overlay);right.append(viewport);
+  const ctx=canvas.getContext('2d'),overlayCtx=overlay.getContext('2d');
+  const hud=element('p','','hint');right.append(hud);
+  const panRow=element('div',undefined,'inline-actions');
+  const left=element('button','←'),rightButton=element('button','→'),up=element('button','↑'),down=element('button','↓'),zoomOut=element('button','− 缩放'),zoomIn=element('button','＋ 缩放'),home=element('button','原点 (0,0)'),used=element('button','定位已用范围');
+  for(const [button,title] of [[left,'向左平移'],[rightButton,'向右平移'],[up,'向上平移'],[down,'向下平移'],[zoomOut,'缩小视图'],[zoomIn,'放大视图'],[home,'回到世界原点'],[used,'定位到已用范围']])button.title=title;
+  panRow.append(left,rightButton,up,down,zoomOut,zoomIn,home,used);right.append(panRow);
+
+  const view={x:0,y:0,zoom:1};let stats=null,renderToken=0,pendingFrame=null,stroke=null;
+  const renderImage=new Image();let lastRequest='',pendingUrl='';
+  function tilePx(){return [map.tile_width*view.zoom,map.tile_height*view.zoom]}
+  function maxRegionCells(){return 250000}
+  function minZoom(){
+    const area=Math.max(1,canvas.width*canvas.height);
+    // 后端限制区域图像不超过1600万像素；可见区域始终只按这个预算取图。
+    return Math.max(0.03125,Math.sqrt(area/16000000));
+  }
+  function columnsVisible(){return Math.max(1,Math.ceil(canvas.width/tilePx()[0]))}
+  function rowsVisible(){return Math.max(1,Math.ceil(canvas.height/tilePx()[1]))}
+  function visibleRegion(){return [view.x,view.y,columnsVisible(),rowsVisible()]}
+  function clampView(){const limit=999000;view.x=Math.max(-limit,Math.min(limit,Math.round(view.x)));view.y=Math.max(-limit,Math.min(limit,Math.round(view.y)))}
+  function cellAt(event){const rect=canvas.getBoundingClientRect();const px=(event.clientX-rect.left)*canvas.width/rect.width,py=(event.clientY-rect.top)*canvas.height/rect.height;return [view.x+Math.floor(px/tilePx()[0]),view.y+Math.floor(py/tilePx()[1])]}
+  function cellInBounds(x,y){return world()?x>= -1000000&&x<=1000000&&y>=-1000000&&y<=1000000:x>=0&&y>=0&&x<map.columns&&y<map.rows}
+
+  function surfaceSize(){
+    if(world()){
+      const width=Math.max(240,Math.round((viewport.clientWidth||720)-2));
+      const height=460;
+      if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;overlay.width=width;overlay.height=height}
+      canvas.style.width='100%';canvas.style.height=height+'px';overlay.style.width='100%';overlay.style.height=height+'px';
+    }else{
+      const width=Math.max(1,map.columns*map.tile_width),height=Math.max(1,map.rows*map.tile_height);
+      if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;overlay.width=width;overlay.height=height}
+      canvas.style.width='auto';canvas.style.height='auto';overlay.style.width=width+'px';overlay.style.height=height+'px';
+    }
+    viewport.style.height=(world()?462:Math.min(canvas.height,460)+2)+'px';
+  }
+  function imageUrl(){
+    const base=endpoint(`maps/${map.id}/image`)+`?rev=${project().revision}&time_ms=${Number(timeInput.value)}&export_preview=${exportToggle.checked}`;
+    if(!world())return base;
+    const region=visibleRegion();
+    return base+`&x=${region[0]}&y=${region[1]}&width=${region[2]}&height=${region[3]}`;
+  }
+  function draw(){
+    surfaceSize();
+    const [tw,th]=tilePx();
+    if(world()&&columnsVisible()*rowsVisible()>maxRegionCells()){
+      hud.textContent='可见区域超过25万格，请放大视图后继续';ctx.clearRect(0,0,canvas.width,canvas.height);overlayCtx.clearRect(0,0,overlay.width,overlay.height);return;
+    }
+    const token=++renderToken;const url=imageUrl();
+    const paintLoaded=()=>{
+      if(token!==renderToken)return;
+      ctx.imageSmoothingEnabled=false;ctx.clearRect(0,0,canvas.width,canvas.height);
+      if(world())ctx.drawImage(renderImage,0,0,renderImage.naturalWidth*view.zoom,renderImage.naturalHeight*view.zoom);
+      else ctx.drawImage(renderImage,0,0);
+      drawGrid();drawAreaOutline();drawHud();
+      if(stroke)drawOverlay();
+    };
+    if(url===lastRequest&&renderImage.complete&&renderImage.naturalWidth){paintLoaded();return}
+    lastRequest=url;pendingUrl=url;
+    renderImage.onload=()=>{if(pendingUrl!==url)return;paintLoaded()};
+    renderImage.onerror=()=>{if(token!==renderToken)return;ctx.clearRect(0,0,canvas.width,canvas.height);hud.textContent='当前区域超出世界坐标范围，请回到原点或缩小视图';drawGrid();drawOverlay()};
+    renderImage.src=url;
+  }
+  function drawGrid(){
+    const [tw,th]=tilePx();const stepX=Math.max(1,Math.round(tw)),stepY=Math.max(1,Math.round(th));
+    ctx.strokeStyle='#e0edff2e';ctx.lineWidth=1;
+    for(let x=0;x<=canvas.width;x+=stepX){ctx.beginPath();ctx.moveTo(x+.5,0);ctx.lineTo(x+.5,canvas.height);ctx.stroke()}
+    for(let y=0;y<=canvas.height;y+=stepY){ctx.beginPath();ctx.moveTo(0,y+.5);ctx.lineTo(canvas.width,y+.5);ctx.stroke()}
+    if(world()){ctx.strokeStyle='#ffd16680';ctx.beginPath();const ox=-view.x*tw,oy=-view.y*th;if(ox>=0&&ox<=canvas.width){ctx.moveTo(ox+.5,0);ctx.lineTo(ox+.5,canvas.height)}if(oy>=0&&oy<=canvas.height){ctx.moveTo(0,oy+.5);ctx.lineTo(canvas.width,oy+.5)}ctx.stroke()}
+  }
+  function drawHud(){
+    hud.textContent=world()
+      ?`大世界 · 视图左上 [${view.x}, ${view.y}] · 缩放 ${view.zoom.toFixed(2)}× · 可见 ${columnsVisible()}×${rowsVisible()} 格`
+      :`有限地图 · ${map.columns}×${map.rows} 格 · 瓦片 ${map.tile_width}×${map.tile_height}`;
+  }
+  function drawOverlay(){
+    overlayCtx.clearRect(0,0,overlay.width,overlay.height);
+    if(!stroke)return;
+    const [tw,th]=tilePx();const index=tile-1;const source=index>=0?paletteImages[index]:null;
+    for(const [x,y] of stroke.cells.values()){
+      const px=(x-view.x)*tw,py=(y-view.y)*th;if(px<-tw||py<-th||px>overlay.width||py>overlay.height)continue;
+      overlayCtx.save();
+      if(source&&source.complete&&source.naturalWidth){
+        if(flipX.checked){overlayCtx.translate(px+tw,py);overlayCtx.scale(-1,1);overlayCtx.drawImage(source,0,0,Math.max(1,tw),Math.max(1,th))}
+        else if(flipY.checked){overlayCtx.translate(px,py+th);overlayCtx.scale(1,-1);overlayCtx.drawImage(source,0,0,Math.max(1,tw),Math.max(1,th))}
+        else overlayCtx.drawImage(source,px,py,Math.max(1,tw),Math.max(1,th));
+      }else{overlayCtx.fillStyle='#ff6b6b55';overlayCtx.fillRect(px,py,Math.max(1,tw),Math.max(1,th))}
+      overlayCtx.strokeStyle='#8aefcaaa';overlayCtx.lineWidth=1;overlayCtx.strokeRect(px+.5,py+.5,Math.max(1,tw-1),Math.max(1,th-1));
+      overlayCtx.restore();
+    }
+  }
+  function drawAreaOutline(){
+    if(followView.checked)return;
+    const area=readArea();const [tw,th]=tilePx();
+    const x=(area[0]-view.x)*tw,y=(area[1]-view.y)*th,w=area[2]*tw,h=area[3]*th;
+    if(w<=0||h<=0)return;
+    ctx.save();ctx.strokeStyle='#f2b53e';ctx.fillStyle='#f2b53e18';ctx.lineWidth=2;
+    ctx.fillRect(x,y,w,h);ctx.setLineDash([8,5]);ctx.strokeRect(x+.5,y+.5,w,h);ctx.setLineDash([]);
+    ctx.restore();
+  }
+  function syncAreaToView(){if(followView.checked)setArea(world()?visibleRegion():[0,0,map.columns,map.rows])}
+  const paletteImages=[...tiles.querySelectorAll('img')];
+  function scheduleDraw(){if(pendingFrame)return;pendingFrame=requestAnimationFrame(()=>{pendingFrame=null;draw()})}
+  function scheduleOverlay(){overlayCtx.clearRect(0,0,overlay.width,overlay.height);drawOverlay()}
+
+  async function loadStats(){
+    try{stats=await api(endpoint(`maps/${map.id}/stats`))}catch(error){status(error.message,true);return}
+    const b=stats.used_bounds;const usedText=b?`已用范围 x ${b[0]}…${b[0]+b[2]-1}, y ${b[1]}…${b[1]+b[3]-1}`:'还没有已用格子';
+    const stored=stats.mode==='world'?` · ${stats.stored_chunks} 个区块`:'';
+    const box=element('p',`${stats.mode==='world'?'大世界':'有限地图'} · ${usedText} · 已保存 ${stats.stored_cells} 格（上限 ${stats.cell_limit}）${stored} · 原点 (${stats.origin[0]}, ${stats.origin[1]})`,'hint');
+    box.dataset.mapStats='';const old=right.querySelector('[data-map-stats]');if(old)old.replaceWith(box);else right.append(box);
+  }
+
+  function zoomBy(factor,event){
+    const old=view.zoom;view.zoom=Math.max(minZoom(),Math.min(8,old*factor));
+    const rect=canvas.getBoundingClientRect();const ax=event?(event.clientX-rect.left)*canvas.width/rect.width:canvas.width/2,ay=event?(event.clientY-rect.top)*canvas.height/rect.height:canvas.height/2;
+    view.x=Math.round(view.x+ax/(map.tile_width*old)-ax/(map.tile_width*view.zoom));
+    view.y=Math.round(view.y+ay/(map.tile_height*old)-ay/(map.tile_height*view.zoom));
+    clampView();syncAreaToView();scheduleDraw();
+  }
+  zoomIn.onclick=()=>world()&&zoomBy(1.5);zoomOut.onclick=()=>world()&&zoomBy(1/1.5);
+  function panBy(dx,dy){if(!world())return;view.x+=dx;view.y+=dy;clampView();syncAreaToView();scheduleDraw()}
+  left.onclick=()=>panBy(-Math.floor(columnsVisible()/4),0);rightButton.onclick=()=>panBy(Math.floor(columnsVisible()/4),0);
+  up.onclick=()=>panBy(0,-Math.floor(rowsVisible()/4));down.onclick=()=>panBy(0,Math.floor(rowsVisible()/4));
+  home.onclick=()=>{view.x=world()?-Math.floor(columnsVisible()/2):0;view.y=world()?-Math.floor(rowsVisible()/2):0;clampView();syncAreaToView();scheduleDraw()};
+  used.onclick=()=>{const b=stats&&stats.used_bounds;if(!b){status('地图还没有已用格子',true);return}
+    view.x=b[0]+Math.floor(b[2]/2)-Math.floor(columnsVisible()/2);view.y=b[1]+Math.floor(b[3]/2)-Math.floor(rowsVisible()/2);clampView();scheduleDraw();setArea(b)};
+  viewport.addEventListener('wheel',e=>{if(!world())return;e.preventDefault();zoomBy(e.deltaY<0?1.25:0.8,e)},{passive:false});
+
+  let drag=null,autoPanTimer=null,lastEvent=null;
+  function stopAutoPan(){if(autoPanTimer){clearInterval(autoPanTimer);autoPanTimer=null}}
+  function strokeCellAt(column,row,interpolate=true){
+    if(!cellInBounds(column,row))return false;
+    const key=column+','+row;
+    if(stroke.cells.has(key))return false;
+    const previous=stroke.last;
+    if(interpolate&&previous){
+      // 快速拖动时补齐经过的格子，保持一笔连续。
+      let [x0,y0]=previous;const dx=column-x0,dy=row-y0;
+      const steps=Math.min(4000,Math.max(Math.abs(dx),Math.abs(dy)));
+      for(let step=1;step<steps;step++){
+        const x=Math.round(x0+dx*step/steps),y=Math.round(y0+dy*step/steps);
+        if(!cellInBounds(x,y))continue;
+        const k=x+','+y;if(!stroke.cells.has(k))stroke.cells.set(k,[x,y]);
+      }
+    }
+    stroke.cells.set(key,[column,row]);stroke.last=[column,row];stroke.moved=true;return true;
+  }
+  function autoPanTick(){
+    if(!drag||drag.mode!=='paint'||!lastEvent)return;
+    const rect=canvas.getBoundingClientRect();const px=(lastEvent.clientX-rect.left)*canvas.width/rect.width,py=(lastEvent.clientY-rect.top)*canvas.height/rect.height;
+    if(px<0||px>canvas.width||py<0||py>canvas.height)return;
+    const zone=26;let dx=0,dy=0;
+    if(px<zone)dx=-1;else if(px>canvas.width-zone)dx=1;
+    if(py<zone)dy=-1;else if(py>canvas.height-zone)dy=1;
+    if(dx||dy){view.x+=dx;view.y+=dy;clampView();syncAreaToView();scheduleDraw();const cell=cellAt(lastEvent);strokeCellAt(cell[0],cell[1]);scheduleOverlay()}
+  }
+  canvas.addEventListener('contextmenu',e=>e.preventDefault());
+  canvas.addEventListener('pointerdown',e=>{
+    if(!S.project||S.busy)return;
+    const panMode=world()&&(e.button===1||e.button===2||e.shiftKey);
+    if(exportToggle.checked&&!panMode){status('导出资源预览只读，请切回实时地图绘制',true);return}
+    lastEvent={clientX:e.clientX,clientY:e.clientY};
+    const cell=cellAt(e);
+    drag={mode:panMode?'pan':'paint',start:[e.clientX,e.clientY],view:[view.x,view.y],moved:false,pointerId:e.pointerId};
+    if(!panMode){stroke={cells:new Map(),moved:false,last:null};strokeCellAt(cell[0],cell[1]);scheduleOverlay()}
+    canvas.setPointerCapture(e.pointerId);stopAutoPan();
+    if(world())autoPanTimer=setInterval(autoPanTick,60);
+    if(panMode)canvas.classList.add('panning');
+  });
+  canvas.addEventListener('pointermove',e=>{
+    const cell=cellAt(e);
+    if(!drag){if(cellInBounds(cell[0],cell[1]))canvas.style.cursor='crosshair';return}
+    lastEvent={clientX:e.clientX,clientY:e.clientY};
+    if(drag.mode==='pan'){
+      const dx=e.clientX-drag.start[0],dy=e.clientY-drag.start[1];
+      if(Math.abs(dx)+Math.abs(dy)>2)drag.moved=true;
+      view.x=drag.view[0]-Math.floor(dx/tilePx()[0]);view.y=drag.view[1]-Math.floor(dy/tilePx()[1]);clampView();syncAreaToView();scheduleDraw();return;
+    }
+    if(e.shiftKey&&world()){drag.mode='pan';drag.start=[e.clientX,e.clientY];drag.view=[view.x,view.y];return}
+    if(strokeCellAt(cell[0],cell[1]))scheduleOverlay();
+  });
+  function finishPointer(e){
+    if(!drag)return;stopAutoPan();const current=drag;drag=null;canvas.classList.remove('panning');
+    try{canvas.releasePointerCapture(current.pointerId)}catch{}
+    if(current.mode==='pan'){if(!current.moved)scheduleDraw();return}
+    const cells=stroke?[...stroke.cells.values()]:[];stroke=null;scheduleOverlay();
+    if(!cells.length){scheduleDraw();return}
+    if(cells.length>50000){status('单笔超过5万格，请放大视图或分批绘制',true);return}
+    commit(cells);
+  }
+  canvas.addEventListener('pointerup',guard(finishPointer));
+  canvas.addEventListener('pointercancel',()=>{drag=null;stroke=null;stopAutoPan();canvas.classList.remove('panning');scheduleOverlay();scheduleDraw()});
+  canvas.addEventListener('lostpointercapture',()=>stopAutoPan());
+  window.addEventListener('resize',scheduleDraw);
+  S.dialogCleanups=[()=>{stopAutoPan();window.removeEventListener('resize',scheduleDraw);if(pendingFrame){cancelAnimationFrame(pendingFrame);pendingFrame=null}}];
+
+  function commit(cells){
+    if(exportToggle.checked)return status('导出资源预览只读',true);
+    S.busy=true;status(`保存 ${cells.length} 格（整笔可一次撤销）…`);
+    post(endpoint(`maps/${map.id}/paint`),{layer_id:layerId,tile,cells,phase_ms:Number(phaseInput.value),flip_x:flipX.checked,flip_y:flipY.checked,revision:project().revision})
+      .then(result=>{S.busy=false;return acceptProject(result)})
+      .then(()=>{map=project().tilemaps.find(m=>m.id===map.id);if(!map.layers.some(l=>l.id===layerId))layerId=map.layers[0].id;scheduleDraw();return loadStats()})
+      .then(()=>status(`已保存 · 本笔 ${cells.length} 格整体可撤销（关闭编辑器后也可用顶部撤销）`))
+      .catch(error=>{S.busy=false;status(error.message,true);scheduleDraw()});
+  }
+
+  controls.append(element('p',world()?'填充只作用于下方明确区域，不会为整片世界展开格子。':'填充只作用于下方明确区域；留空则填满整张有限地图。','muted'));
+  controls.append(form([
+    select('mode','填充模式','checker',[['solid','纯色瓦片'],['checker','棋盘'],['random','固定种子随机'],['border','边框']]),
+    num('first','第一瓦片编号',1,0,map.tiles.length),num('second','第二瓦片编号',Math.min(2,map.tiles.length),0,map.tiles.length),
+    num('seed','随机种子',42,0,1000000),
+  ],'填充明确区域',async data=>{
+    const area=readArea();
+    if(world()&&(area[2]<1||area[3]<1))throw Error('请填写有效的填充区域');
+    if(area[2]*area[3]>250000)throw Error('填充区域超过25万格，请缩小区域');
+    if(area[2]*area[3]*map.tile_width*map.tile_height>16000000)throw Error('填充区域图像超过1600万像素，请缩小区域');
+    await mutate('填充明确区域…',endpoint(`maps/${map.id}/fill`),{...data,region:area,layer_id:layerId});
+    map=project().tilemaps.find(m=>m.id===map.id);scheduleDraw();await loadStats()
+  }));
+
+  const areaGrid=element('div',undefined,'two');const areaFields=[];
+  for(const [name,label,def] of [['x','区域起点X',0],['y','区域起点Y',0],['width','区域列数',12],['height','区域行数',12]]){
+    const f=field(num(name,label,def,-1000000,1000000));areaGrid.append(f);areaFields.push(f);
+  }
+  const followView=element('input');followView.type='checkbox';followView.checked=true;
+  const followLabel=element('label',' 区域跟随视图','check');followLabel.prepend(followView);
+  controls.append(element('p',world()?'下载与填充的明确区域（世界格坐标）；关闭“跟随视图”后可手动圈定，画布上会标出该矩形。':'下载与填充的明确区域（有限地图坐标）；填写后画布会标出该矩形。','muted'),areaGrid);
+  const useView=element('button','用当前可见区域'),useUsed=element('button','用已用范围');const areaRow=element('div',undefined,'inline-actions');areaRow.append(followLabel,useView,useUsed);controls.append(areaRow);
+  followView.onchange=()=>{syncAreaToView();scheduleDraw()};
+  function setArea(area){areaFields.forEach((f,i)=>{f.querySelector('input').value=String(area[i])})}
+  function readArea(){const values=areaFields.map(f=>Number(f.querySelector('input').value));return values.map((v,i)=>{const value=Number.isFinite(v)?Math.trunc(v):0;return i<2?Math.max(-1000000,Math.min(1000000,value)):Math.max(0,Math.min(4096,value))})}
+  useView.onclick=()=>{followView.checked=true;setArea(world()?visibleRegion():[0,0,map.columns,map.rows]);scheduleDraw()};
+  useUsed.onclick=()=>{const b=stats&&stats.used_bounds;if(!b){status('地图还没有已用格子',true);return}followView.checked=false;setArea(b);scheduleDraw()};
+  for(const f of areaFields)f.querySelector('input').addEventListener('input',()=>{followView.checked=false;scheduleDraw()});
+
+  const add=element('button','＋ 地图图层');add.onclick=guard(async()=>{await mutate('添加地图图层…',endpoint(`maps/${map.id}/layers`),{name:'新地图层'});await openMaps(map.id)});
+  const del=element('button','移除此地图（可撤销）');del.onclick=guard(async()=>{await mutate('移除地图…',endpoint(`maps/${map.id}`),{},'DELETE');await openMaps()});
+  controls.append(element('p'),add,del);
+  const exportLink=element('a','↓ 下载所选区域与瓦片ZIP');exportLink.href='#';
+  exportLink.onclick=e=>{
+    e.preventDefault();
+    const area=readArea();
+    if(area[2]<1||area[3]<1){status('请填写有效的下载区域',true);return}
+    if(area[2]*area[3]>250000||area[2]*area[3]*map.tile_width*map.tile_height>16000000){status('下载区域过大，请缩小范围',true);return}
+    const link=element('a');link.href=endpoint(`maps/${map.id}/export`)+`?x=${area[0]}&y=${area[1]}&width=${area[2]}&height=${area[3]}`;link.download='tilemap.zip';link.click();
+  };
+  right.append(element('p'),exportLink,element('p','包内包含所选区域地图JSON、瓦片PNG、区域预览以及 world.json（原点、区域、像素锚点与格子换算），不会生成覆盖整片世界的巨图。','hint'));
+  layout.append(controls,right);body.append(layout);
+  surfaceSize();
+  const initialArea=world()?visibleRegion():[0,0,map.columns,map.rows];
+  setArea(initialArea);
+  scheduleDraw();await loadStats();
 }
+
 async function init(){S.catalog=await api('/api/catalog');await loadProjects()}
 init().catch(error=>status(error.message,true));
 

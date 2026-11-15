@@ -171,11 +171,11 @@ def project_bundle(store, project):
     return stream.getvalue()
 
 
-def tiled_bundle(store, tilemaps, project, map_id):
+def tiled_bundle(store, tilemaps, project, map_id, region=None):
     from .tilemaps import find_map
     from .map_animation import compile_resources, render_resources
     tilemap = find_map(project, map_id)
-    document, sources = compile_resources(project, tilemap, tilemaps._base_document(project, tilemap))
+    document, sources = compile_resources(project, tilemap, tilemaps._base_document(project, tilemap, region))
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, 'w', zipfile.ZIP_DEFLATED) as archive:
         archive.writestr('map.tmj', json_bytes(document))
@@ -183,6 +183,18 @@ def tiled_bundle(store, tilemaps, project, map_id):
             image = render_frame(store, project, frame_id).resize((tilemap['tile_width'], tilemap['tile_height']), Image.Resampling.NEAREST)
             archive.writestr(filename, png_bytes(image))
         archive.writestr('preview.png', png_bytes(render_resources(store, project, document, sources, 0)))
+        if tilemap.get('mode') == 'world':
+            # 原点、区域与预览的对应关系随包保存，下载后可互相还原。
+            info = {
+                'world_origin': document['world']['origin'],
+                'region': document['world']['region'],
+                'chunk_size': document['world']['chunk_size'],
+                'tile_size': [tilemap['tile_width'], tilemap['tile_height']],
+                'preview_pixel_origin': [document['world']['region']['x'] * tilemap['tile_width'],
+                                         document['world']['region']['y'] * tilemap['tile_height']],
+                'cell_formula': 'absolute_cell = [region.x + index % region.width, region.y + index // region.width]',
+            }
+            archive.writestr('world.json', json_bytes(info))
     return stream.getvalue()
 
 

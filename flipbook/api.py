@@ -577,6 +577,10 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
         data = body()
         return jsonify(tilemaps.layer(key, v.revision(data), map_id, data))
 
+    @api.get('/projects/<key>/maps/<map_id>/stats')
+    def map_stats(key, map_id):
+        return jsonify(tilemaps.stats(key, map_id))
+
     @api.delete('/projects/<key>/maps/<map_id>')
     def remove_map(key, map_id):
         data = body()
@@ -585,18 +589,29 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
             project['tilemaps'].remove(find_map(project, map_id))
         return jsonify(store.get(key))
 
+    def map_region():
+        """只接受显式区域参数；有限地图可省略。"""
+        if 'x' not in request.args or 'y' not in request.args:
+            return None
+        return [v.integer(request.args.get('x'), '区域起点X', -1000000, 1000000),
+                v.integer(request.args.get('y'), '区域起点Y', -1000000, 1000000),
+                v.integer(request.args.get('width', 0), '区域列数', 1, 4096),
+                v.integer(request.args.get('height', 0), '区域行数', 1, 4096)]
+
     @api.get('/projects/<key>/maps/<map_id>/image')
     def map_image(key, map_id):
         with store.lock:
             elapsed = v.integer(request.args.get('time_ms', 0), '地图预览时间', 0, 1000000000000)
+            region = map_region()
             if request.args.get('export_preview') == 'true':
-                return image_response(tilemaps.render_export(key, map_id, elapsed))
-            return image_response(tilemaps.render(key, map_id, elapsed))
+                return image_response(tilemaps.render_export(key, map_id, elapsed, region))
+            return image_response(tilemaps.render(key, map_id, elapsed, region))
 
     @api.get('/projects/<key>/maps/<map_id>/export')
     def map_export(key, map_id):
         with store.lock:
-            return download(tiled_bundle(store, tilemaps, store.get(key), map_id), 'tilemap.zip', 'application/zip')
+            region = map_region()
+            return download(tiled_bundle(store, tilemaps, store.get(key), map_id, region), 'tilemap.zip', 'application/zip')
 
     @api.post('/projects/<key>/matte')
     def matte(key):

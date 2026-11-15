@@ -1,11 +1,12 @@
 from copy import deepcopy
 from PIL import Image
 from . import validate as v
+from . import tileworld as tw
 from .model import find_frame
 from .composite import render_frame
 
 
-GID_MASK = 0x1FFFFFFF
+GID_MASK = tw.GID_MASK
 
 
 def clip_schedule(project, clip_id):
@@ -33,6 +34,18 @@ def frame_at(sequence, elapsed):
     raise v.Invalid('动作曝光序列无效')
 
 
+def _validate_phase_table(layer, locations):
+    offsets = layer.get('phase_offsets', {})
+    if not isinstance(offsets, dict):
+        raise v.Invalid('实例相位表无效')
+    for cell, phase in offsets.items():
+        if locations(cell) is None:
+            raise v.Invalid('地图格位置无效')
+        if isinstance(phase, bool) or not isinstance(phase, int):
+            raise v.Invalid('实例相位须为整数毫秒')
+        v.integer(phase, '实例相位', 0, 3000000)
+
+
 def validate_map(project, tilemap):
     animations = tilemap.get('animations', {})
     if not isinstance(animations, dict):
@@ -42,22 +55,55 @@ def validate_map(project, tilemap):
             raise v.Invalid('动态瓦片编号无效')
         clip_schedule(project, clip_id)
     profiles = set()
-    for layer in tilemap['layers']:
-        offsets = layer.get('phase_offsets', {})
-        if not isinstance(offsets, dict):
-            raise v.Invalid('实例相位表无效')
-        for cell, phase in offsets.items():
-            if str(v.integer(int(cell), '地图格位置', 0, len(layer['data']) - 1)) != cell:
-                raise v.Invalid('地图格位置无效')
-            if isinstance(phase, bool) or not isinstance(phase, int):
-                raise v.Invalid('实例相位须为整数毫秒')
-            v.integer(phase, '实例相位', 0, 3000000)
-        for index, raw in enumerate(layer['data']):
-            base = raw & GID_MASK
-            if str(base) in animations:
-                sequence = clip_schedule(project, animations[str(base)])
-                phase = offsets.get(str(index), 0) % sum(d for _, d in sequence)
-                profiles.add((base, phase))
+    if tw.is_world(tilemap):
+        def world_location(cell):
+            if not isinstance(cell, str):
+                return None
+            parts = cell.split(',')
+            if len(parts) != 2:
+                return None
+            try:
+                x, y = int(parts[0]), int(parts[1])
+            except ValueError:
+                return None
+            if str(x) != parts[0] or str(y) != parts[1]:
+                return None
+            if not -tw.COORDINATE_LIMIT <= x <= tw.COORDINATE_LIMIT:
+                return None
+            if not -tw.COORDINATE_LIMIT <= y <= tw.COORDINATE_LIMIT:
+                return None
+            return x, y
+
+        for layer in tilemap['layers']:
+            _validate_phase_table(layer, world_location)
+            for x, y, raw in tw.iter_all_cells(tilemap, layer):
+                base = raw & GID_MASK
+                if str(base) in animations:
+                    sequence = clip_schedule(project, animations[str(base)])
+                    phase = tw.phase_for(layer, tilemap, x, y) % sum(d for _, d in sequence)
+                    profiles.add((base, phase))
+    else:
+        cell_count = tilemap['columns'] * tilemap['rows']
+
+        def finite_location(cell):
+            if not isinstance(cell, str):
+                return None
+            try:
+                index = int(cell)
+            except ValueError:
+                return None
+            if str(index) != cell or not 0 <= index < cell_count:
+                return None
+            return index
+
+        for layer in tilemap['layers']:
+            _validate_phase_table(layer, finite_location)
+            for index, raw in enumerate(layer['data']):
+                base = raw & GID_MASK
+                if str(base) in animations:
+                    sequence = clip_schedule(project, animations[str(base)])
+                    phase = layer.get('phase_offsets', {}).get(str(index), 0) % sum(d for _, d in sequence)
+                    profiles.add((base, phase))
     if len(profiles) > 64:
         raise v.Invalid('每张地图最多64种动态瓦片与相位组合')
 
@@ -75,29 +121,44 @@ def bind_animation(store, key, revision, map_id, tile, clip_id):
     return store.get(key)
 
 
-def render_live(store, project, tilemap, elapsed=0):
+def _cell_image(rasters, store, project, tilemap, frame_id, raw, animations, elapsed, phase):
+    base = raw & GID_MASK
+    if base in animations:
+        frame_id = frame_at(animations[base], elapsed + phase)
+    if frame_id not in rasters:
+        rasters[frame_id] = render_frame(store, project, frame_id).resize(
+            (tilemap['tile_width'], tilemap['tile_height']), Image.Resampling.NEAREST)
+    image = rasters[frame_id]
+    if raw & tw.FLIP_HORIZONTAL:
+        image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    if raw & tw.FLIP_VERTICAL:
+        image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+    return image
+
+
+def render_live(store, project, tilemap, elapsed=0, region=None):
     width, height = tilemap['tile_width'], tilemap['tile_height']
-    result = Image.new('RGBA', (tilemap['columns'] * width, tilemap['rows'] * height))
+    if tw.is_world(tilemap):
+        if region is None:
+            raise v.Invalid('大世界地图渲染需要当前可见区域')
+        x0, y0, columns, rows = region
+    else:
+        x0 = y0 = 0
+        columns, rows = tilemap['columns'], tilemap['rows']
+    result = Image.new('RGBA', (columns * width, rows * height))
     animations = {int(base): clip_schedule(project, key) for base, key in tilemap.get('animations', {}).items()}
     rasters = {}
     for layer in tilemap['layers']:
         if not layer['visible']:
             continue
-        for index, raw in enumerate(layer['data']):
+        cells = tw.iter_region_cells(tilemap, layer, (x0, y0, columns, rows))
+        for x, y, raw in cells:
             base = raw & GID_MASK
             if not base:
                 continue
-            frame_id = tilemap['tiles'][base - 1]
-            if base in animations:
-                frame_id = frame_at(animations[base], elapsed + layer.get('phase_offsets', {}).get(str(index), 0))
-            if frame_id not in rasters:
-                rasters[frame_id] = render_frame(store, project, frame_id).resize((width, height), Image.Resampling.NEAREST)
-            image = rasters[frame_id]
-            if raw & 0x80000000:
-                image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-            if raw & 0x40000000:
-                image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
-            result.alpha_composite(image, (index % tilemap['columns'] * width, index // tilemap['columns'] * height))
+            image = _cell_image(rasters, store, project, tilemap, tilemap['tiles'][base - 1], raw,
+                                animations, elapsed, tw.phase_for(layer, tilemap, x, y))
+            result.alpha_composite(image, ((x - x0) * width, (y - y0) * height))
     return result
 
 
