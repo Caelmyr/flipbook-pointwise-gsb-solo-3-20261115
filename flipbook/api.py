@@ -45,7 +45,7 @@ def selected(data, project):
     return data.get('frame_ids', [f['id'] for f in project['frames']])
 
 
-def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes):
+def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes, morph=None):
     api = Blueprint('api', __name__, url_prefix='/api')
 
     @api.get('/health')
@@ -318,6 +318,36 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
     def tween_loop(key):
         data = body()
         return jsonify(tween.procedural_loop(key, v.revision(data), data))
+
+    @api.post('/projects/<key>/morph/plan')
+    def morph_plan(key):
+        data = body()
+        return jsonify(morph.plan(key, data))
+
+    @api.post('/projects/<key>/morph/preview')
+    def morph_preview(key):
+        data = body()
+        with store.lock:
+            image = morph.preview(key, data)
+        return image_response(image)
+
+    @api.post('/projects/<key>/morph')
+    def morph_generate(key):
+        data = body()
+        return jsonify(morph.generate(key, v.revision(data), data))
+
+    @api.post('/projects/<key>/morph/recompute')
+    def morph_recompute(key):
+        data = body()
+        return jsonify(morph.recompute(key, v.revision(data), data))
+
+    @api.get('/projects/<key>/morph')
+    def morph_groups(key):
+        return jsonify(morph.groups(key))
+
+    @api.get('/projects/<key>/morph/<group_id>')
+    def morph_group(key, group_id):
+        return jsonify(morph.group_details(key, group_id))
 
     @api.post('/projects/<key>/resize')
     def resize(key):

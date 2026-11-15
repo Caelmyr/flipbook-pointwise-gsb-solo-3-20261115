@@ -4,6 +4,10 @@ from . import validate as v
 from .model import find_frame, new_frame, clone_frame, new_id
 
 
+def sets_intersect(first, second):
+    return not set(first).isdisjoint(second)
+
+
 class Timeline:
     def __init__(self, store):
         self.store = store
@@ -31,6 +35,12 @@ class Timeline:
             if len(ids) == len(project['frames']):
                 raise v.Invalid('动画至少保留一帧')
             project['frames'] = [f for f in project['frames'] if f['id'] not in ids]
+            if project.get('morph_groups'):
+                # A partial recipe can no longer reproduce the whole transition,
+                # so the group is dropped rather than left half-recomputable.
+                project['morph_groups'] = [group for group in project['morph_groups']
+                                           if not sets_intersect(group['frames'], ids)
+                                           and group['first'] not in ids and group['second'] not in ids]
             for clip in project['clips']:
                 clip['frame_ids'] = [key for key in clip['frame_ids'] if key not in ids]
                 if 'exposures' in clip:

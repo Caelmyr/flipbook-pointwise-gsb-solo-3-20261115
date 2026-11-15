@@ -15,6 +15,17 @@ test_layer_opacity_and_blending (test_workflows.Workflows.test_layer_opacity_and
 test_locked_layer_rejects_and_revision_unchanged (test_workflows.Workflows.test_locked_layer_rejects_and_revision_unchanged) ... ok
 test_matte_and_auto_collision (test_workflows.Workflows.test_matte_and_auto_collision) ... ok
 test_mirror_drawing_and_erase (test_workflows.Workflows.test_mirror_drawing_and_erase) ... ok
+test_morph_alpha_follows_shape_not_opacity (test_workflows.Workflows.test_morph_alpha_follows_shape_not_opacity) ... ok
+test_morph_generates_intermediate_frames_and_keeps_originals (test_workflows.Workflows.test_morph_generates_intermediate_frames_and_keeps_originals) ... ok
+test_morph_group_dropped_when_generated_frame_removed (test_workflows.Workflows.test_morph_group_dropped_when_generated_frame_removed) ... ok
+test_morph_group_survives_project_archive_roundtrip (test_workflows.Workflows.test_morph_group_survives_project_archive_roundtrip) ... ok
+test_morph_moves_features_instead_of_doubling_them (test_workflows.Workflows.test_morph_moves_features_instead_of_doubling_them)
+The original complaint: a plain crossfade shows two eyes and two outlines. ... ok
+test_morph_plan_lists_duration_and_order_before_generating (test_workflows.Workflows.test_morph_plan_lists_duration_and_order_before_generating) ... ok
+test_morph_recompute_rejects_edited_originals (test_workflows.Workflows.test_morph_recompute_rejects_edited_originals) ... ok
+test_morph_recompute_replaces_same_pair_only (test_workflows.Workflows.test_morph_recompute_replaces_same_pair_only) ... ok
+test_morph_reports_conflicting_correspondence (test_workflows.Workflows.test_morph_reports_conflicting_correspondence) ... ok
+test_morph_reveal_window_keeps_one_local_copy (test_workflows.Workflows.test_morph_reveal_window_keeps_one_local_copy) ... ok
 test_named_versions_restore_fork_compare (test_workflows.Workflows.test_named_versions_restore_fork_compare) ... ok
 test_ninepatch_preserves_corners (test_workflows.Workflows.test_ninepatch_preserves_corners) ... ok
 test_palette_extraction_and_mapping (test_workflows.Workflows.test_palette_extraction_and_mapping) ... ok
@@ -31,6 +42,6 @@ test_time_resample_total_preserved (test_workflows.Workflows.test_time_resample_
 test_transform_tween_end_state (test_workflows.Workflows.test_transform_tween_end_state) ... ok
 
 ----------------------------------------------------------------------
-Ran 31 tests in 1.112s
+Ran 41 tests in 2.188s
 
 OK

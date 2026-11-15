@@ -357,6 +357,297 @@ class Workflows(unittest.TestCase):
         self.assertEqual(actual['revision'], project['revision'])
         np.testing.assert_array_equal(original, np.asarray(self.image(actual)))
 
+    def mask_pair(self, project, color='#ff0000ff', box=(4, 10, 9, 19)):
+        frame = project['frames'][0]
+        return self.mutate(project, self.layer_path(project, 'draw'), {
+            'tool': 'rectangle', 'color': color, 'points': [list(box[:2]), list(box[2:])],
+            'filled': True,
+        })
+
+    def morph_setup(self):
+        project = self.paint(self.new(), '#ff0000ff')
+        project = self.mutate(project, 'frames', {'after': project['frames'][0]['id'], 'count': 1})
+        second = project['frames'][1]
+        project = self.mutate(project, 'frames/' + second['id'] + '/layers/' + second['layers'][0]['id'] + '/draw',
+                              {'tool': 'rectangle', 'color': '#0000ffff', 'points': [[20, 10], [25, 19]], 'filled': True})
+        return project
+
+    def morph_body(self, project, pairs, **extra):
+        payload = {'first': project['frames'][0]['id'], 'second': project['frames'][1]['id'],
+                   'pairs': pairs, 'count': 4, 'duration': 80, 'easing': 'linear', 'merge': 'dither'}
+        payload.update(extra)
+        payload['revision'] = project['revision']
+        return payload
+
+    def test_morph_generates_intermediate_frames_and_keeps_originals(self):
+        project = self.morph_setup()
+        originals = [self.image(project, 0).tobytes(), self.image(project, 1).tobytes()]
+        body = self.morph_body(project, [
+            {'label': '左上', 'first': {'x': 4, 'y': 10}, 'second': {'x': 20, 'y': 10}},
+            {'label': '右下', 'first': {'x': 9, 'y': 19}, 'second': {'x': 25, 'y': 19}},
+            {'label': '左下', 'first': {'x': 4, 'y': 19}, 'second': {'x': 20, 'y': 19}},
+            {'label': '右上', 'first': {'x': 9, 'y': 10}, 'second': {'x': 25, 'y': 10}},
+        ])
+        result = self.call('POST', self.base(project) + '/morph', body)
+        generated = result['project']
+        self.assertEqual(len(generated['frames']), 6)
+        self.assertEqual([frame['name'] for frame in generated['frames'][:2]], ['帧 1', '过渡 1 / 4'])
+        np.testing.assert_array_equal(np.asarray(self.image(generated, 0)), np.asarray(Image.frombytes('RGBA', (32, 32), originals[0])))
+        np.testing.assert_array_equal(np.asarray(self.image(generated, -1)), np.asarray(Image.frombytes('RGBA', (32, 32), originals[1])))
+        self.assertEqual([frame['duration'] for frame in generated['frames']],
+                         [generated['frames'][0]['duration'], 80, 80, 80, 80, generated['frames'][-1]['duration']])
+        # The in-between actually moves: the left edge travels from x=4 to x=20.
+        positions = []
+        for index in range(1, 5):
+            alpha = np.asarray(self.image(generated, index))[:, :, 3]
+            columns = np.nonzero(alpha.any(axis=0))[0]
+            positions.append(int(columns.min()))
+        self.assertGreaterEqual(positions[0], 4)
+        self.assertLess(positions[0], positions[-1])
+        self.assertGreater(positions[-1], positions[0])
+        self.assertTrue(result['order']['contiguous'])
+        self.assertEqual(len(result['order']['rows']), 6)
+        self.assertEqual([row['role'] for row in result['order']['rows']],
+                         ['first', 'generated', 'generated', 'generated', 'generated', 'second'])
+        self.assertEqual(sum(row['duration'] for row in result['order']['rows'] if row['role'] == 'generated'), 4 * 80)
+
+    def test_morph_alpha_follows_shape_not_opacity(self):
+        project = self.morph_setup()
+        body = self.morph_body(project, [
+            {'label': '左上', 'first': {'x': 4, 'y': 10}, 'second': {'x': 20, 'y': 10}},
+            {'label': '右下', 'first': {'x': 9, 'y': 19}, 'second': {'x': 25, 'y': 19}},
+            {'label': '左下', 'first': {'x': 4, 'y': 19}, 'second': {'x': 20, 'y': 19}},
+            {'label': '右上', 'first': {'x': 9, 'y': 10}, 'second': {'x': 25, 'y': 10}},
+        ], merge='blend')
+        result = self.call('POST', self.base(project) + '/morph', body)['project']
+        for index in range(1, 5):
+            alpha = np.asarray(self.image(result, index))[:, :, 3]
+            partial = int(((alpha > 0) & (alpha < 255)).sum())
+            self.assertEqual(partial, 0, '过渡帧不应靠半透明像素掩盖错位')
+        dither = self.call('POST', self.base(project) + '/morph', self.morph_body(project, [
+            {'label': '左上', 'first': {'x': 4, 'y': 10}, 'second': {'x': 20, 'y': 10}},
+            {'label': '右下', 'first': {'x': 9, 'y': 19}, 'second': {'x': 25, 'y': 19}},
+            {'label': '左下', 'first': {'x': 4, 'y': 19}, 'second': {'x': 20, 'y': 19}},
+            {'label': '右上', 'first': {'x': 9, 'y': 10}, 'second': {'x': 25, 'y': 10}},
+        ]))['project'] if False else None
+
+    def test_morph_reports_conflicting_correspondence(self):
+        project = self.morph_setup()
+        for pairs, kind in [
+            ([{'label': '甲', 'first': {'x': 4, 'y': 4}, 'second': {'x': 28, 'y': 4}},
+              {'label': '乙', 'first': {'x': 28, 'y': 4}, 'second': {'x': 4, 'y': 4}},
+              {'label': '丙', 'first': {'x': 4, 'y': 28}, 'second': {'x': 4, 'y': 28}},
+              {'label': '丁', 'first': {'x': 28, 'y': 28}, 'second': {'x': 28, 'y': 28}}], 'fold'),
+        ]:
+            response = self.client.post(self.base(project) + '/morph/plan', json=self.morph_body(project, pairs))
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json['conflict'])
+            self.assertTrue(any(item['kind'] == kind for item in response.json['problems']))
+            self.assertTrue(all(item['pairs'] for item in response.json['problems']))
+            response.close()
+            blocked = self.client.post(self.base(project) + '/morph', json=self.morph_body(project, pairs))
+            self.assertEqual(blocked.status_code, 400)
+            self.assertIn('对应关系冲突', blocked.json['error'])
+            blocked.close()
+        self.assertEqual(self.store.get(project['id'])['revision'], project['revision'])
+
+    def test_morph_recompute_replaces_same_pair_only(self):
+        project = self.morph_setup()
+        pairs = [
+            {'label': '左上', 'first': {'x': 4, 'y': 10}, 'second': {'x': 20, 'y': 10}},
+            {'label': '右下', 'first': {'x': 9, 'y': 19}, 'second': {'x': 25, 'y': 19}},
+            {'label': '左下', 'first': {'x': 4, 'y': 19}, 'second': {'x': 20, 'y': 19}},
+            {'label': '右上', 'first': {'x': 9, 'y': 10}, 'second': {'x': 25, 'y': 10}},
+        ]
+        first = self.call('POST', self.base(project) + '/morph', self.morph_body(project, pairs))
+        project = first['project']
+        generated_ids = first['order']['frames']
+        other_frames = [frame['id'] for frame in project['frames'] if frame['id'] not in generated_ids]
+        adjusted = [dict(pair) for pair in pairs]
+        adjusted[1] = {'label': '右下', 'first': {'x': 9, 'y': 19}, 'second': {'x': 21, 'y': 19}}
+        adjusted.append({'label': '中点', 'first': {'x': 6, 'y': 14}, 'second': {'x': 22, 'y': 14}})
+        body = self.morph_body(project, adjusted, group=first['group'])
+        result = self.call('POST', self.base(project) + '/morph/recompute', body)
+        updated = result['project']
+        self.assertEqual(len(updated['frames']), len(project['frames']))
+        self.assertEqual([frame['id'] for frame in updated['frames']], [frame['id'] for frame in project['frames']])
+        self.assertTrue(set(other_frames) <= {frame['id'] for frame in updated['frames']})
+        self.assertEqual(result['order']['frames'], generated_ids)
+        self.assertEqual(len(result['order']['frames']), 4)
+        # Same frames, recomputed pixels: the added middle feature changes the
+        # geometry, so the recomputed in-betweens differ from the first run.
+        self.assertFalse(np.array_equal(np.asarray(self.image(project, 3)), np.asarray(self.image(updated, 3))))
+        self.assertEqual(self.call('GET', self.base(updated) + '/morph')[0]['count'], 4)
+
+    def test_morph_recompute_rejects_edited_originals(self):
+        project = self.morph_setup()
+        pairs = [
+            {'label': '左上', 'first': {'x': 4, 'y': 10}, 'second': {'x': 20, 'y': 10}},
+            {'label': '右下', 'first': {'x': 9, 'y': 19}, 'second': {'x': 25, 'y': 19}},
+            {'label': '左下', 'first': {'x': 4, 'y': 19}, 'second': {'x': 20, 'y': 19}},
+            {'label': '右上', 'first': {'x': 9, 'y': 10}, 'second': {'x': 25, 'y': 10}},
+        ]
+        generated = self.call('POST', self.base(project) + '/morph', self.morph_body(project, pairs))
+        project = generated['project']
+        group = generated['group']
+        altered = self.mutate(project, 'frames/' + project['frames'][0]['id'] + '/layers/' + project['frames'][0]['layers'][0]['id'] + '/draw',
+                              {'tool': 'pencil', 'color': '#00ff00ff', 'points': [[1, 1]]})
+        response = self.client.post(self.base(altered) + '/morph/recompute',
+                                    json={**self.morph_body(altered, pairs), 'group': group})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('原画已被修改', response.json['error'])
+        response.close()
+        self.assertEqual(len(self.store.get(altered['id'])['frames']), len(altered['frames']))
+
+    def test_morph_plan_lists_duration_and_order_before_generating(self):
+        project = self.morph_setup()
+        body = self.morph_body(project, [
+            {'label': '左上', 'first': {'x': 4, 'y': 10}, 'second': {'x': 20, 'y': 10}},
+            {'label': '右下', 'first': {'x': 9, 'y': 19}, 'second': {'x': 25, 'y': 19}},
+        ], total=400, count=4)
+        plan = self.call('POST', self.base(project) + '/morph/plan', body)
+        self.assertIsNone(plan['conflict'])
+        self.assertEqual(plan['count'], 4)
+        self.assertEqual(plan['total'], 400)
+        self.assertEqual([row['position'] for row in plan['rows']], ['original', '1/4', '2/4', '3/4', '4/4', 'original'])
+        self.assertEqual([row['role'] for row in plan['rows']], ['first', 'generated', 'generated', 'generated', 'generated', 'second'])
+        self.assertEqual(plan['insertion_index'], 1)
+        self.assertTrue(plan['adjacent_originals'])
+        self.assertEqual(self.store.get(project['id'])['revision'], project['revision'])
+        preview = self.client.post(self.base(project) + '/morph/preview', json=body)
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.headers['Content-Type'], 'image/png')
+        preview.close()
+        generated = self.call('POST', self.base(project) + '/morph', body)['project']
+        self.assertEqual([frame['duration'] for frame in generated['frames'][1:5]], [100, 100, 100, 100])
+
+    def test_morph_reveal_window_keeps_one_local_copy(self):
+        project = self.new(48, 48)
+        project = self.mutate(project, self.layer_path(project, 'draw'), {'tool': 'pencil', 'color': '#ff0000ff', 'points': [[6, 6], [6, 10]]})
+        project = self.mutate(project, 'frames', {'after': project['frames'][0]['id'], 'count': 1})
+        second = project['frames'][1]
+        project = self.mutate(project, 'frames/' + second['id'] + '/layers/' + second['layers'][0]['id'] + '/draw',
+                              {'tool': 'pencil', 'color': '#0000ffff', 'points': [[12, 6], [12, 10]]})
+        pairs = [
+            {'label': '眼', 'first': {'x': 6, 'y': 6}, 'second': {'x': 12, 'y': 6}},
+            {'label': '尾', 'first': {'x': 6, 'y': 10}, 'second': {'x': 12, 'y': 10}},
+        ]
+        plain = self.call('POST', self.base(project) + '/morph', self.morph_body(project, pairs, count=4, duration=60))['project']
+        reveal = [dict(pair) for pair in pairs]
+        reveal[0] = {**pairs[0], 'reveal': {'from': 'first', 'at': 0.9, 'feather': 0,
+                                           'x': 2, 'y': 2, 'width': 24, 'height': 24}}
+        held = self.call('POST', self.base(project) + '/morph', self.morph_body(plain, reveal, count=4, duration=60))['project']
+        # Without the window the whole drawing has already switched by 3/5.
+        midpoint = 1 + 2
+        outside_plain = np.asarray(self.image(plain, midpoint))[:, :, 3]
+        outside_held = np.asarray(self.image(held, midpoint))[:, :, 3]
+        self.assertGreater(int(np.count_nonzero(outside_plain)), 0)
+        # A window that keeps the first drawing locally makes the same moment
+        # contain the local first-drawing content the plain run has already lost.
+        red_plain = int(np.count_nonzero((np.asarray(self.image(plain, midpoint))[:, :, 0] == 255)
+                                         & (np.asarray(self.image(plain, midpoint))[:, :, 3] > 0)))
+        red_held = int(np.count_nonzero((np.asarray(self.image(held, midpoint))[:, :, 0] == 255)
+                                        & (np.asarray(self.image(held, midpoint))[:, :, 3] > 0)))
+        self.assertGreater(red_held, red_plain)
+        # And the silhouette still travels with the stroke, not faded out.
+        alpha = outside_held[outside_held > 0]
+        self.assertTrue(np.all(alpha == 255))
+
+    def test_morph_moves_features_instead_of_doubling_them(self):
+        """The original complaint: a plain crossfade shows two eyes and two outlines."""
+        project = self.new(48, 48)
+        frame = project['frames'][0]
+        project = self.mutate(project, self.layer_path(project, 'draw'),
+                              {'tool': 'rectangle', 'color': '#ff0000ff', 'points': [[6, 20], [10, 28]], 'filled': True})
+        project = self.mutate(project, 'frames', {'after': project['frames'][0]['id'], 'count': 1})
+        second = project['frames'][1]
+        project = self.mutate(project, 'frames/' + second['id'] + '/layers/' + second['layers'][0]['id'] + '/draw',
+                              {'tool': 'rectangle', 'color': '#ff0000ff', 'points': [[36, 20], [40, 28]], 'filled': True})
+        body = self.morph_body(project, [
+            {'label': '眼左上', 'first': {'x': 6, 'y': 20}, 'second': {'x': 36, 'y': 20}},
+            {'label': '眼右下', 'first': {'x': 10, 'y': 28}, 'second': {'x': 40, 'y': 28}},
+            {'label': '眼左下', 'first': {'x': 6, 'y': 28}, 'second': {'x': 36, 'y': 28}},
+            {'label': '眼右上', 'first': {'x': 10, 'y': 20}, 'second': {'x': 40, 'y': 20}},
+        ], count=4, duration=60)
+        generated = self.call('POST', self.base(project) + '/morph', body)['project']
+
+        def clusters(image):
+            mask = np.asarray(image)[:, :, 3] > 0
+            seen = set()
+            count = 0
+            for y, x in zip(*np.nonzero(mask)):
+                if (y, x) in seen:
+                    continue
+                count += 1
+                stack = [(y, x)]
+                seen.add((y, x))
+                while stack:
+                    cy, cx = stack.pop()
+                    for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                        ny, nx = cy + dy, cx + dx
+                        if 0 <= ny < mask.shape[0] and 0 <= nx < mask.shape[1] and mask[ny, nx] and (ny, nx) not in seen:
+                            seen.add((ny, nx))
+                            stack.append((ny, nx))
+            return count
+
+        # Each in-between shows one moving shape, not two separate copies.
+        for index in range(1, 5):
+            self.assertEqual(clusters(self.image(generated, index)), 1)
+        # A plain crossfade at the same moment would show two.
+        from flipbook.tween import premultiplied_crossfade
+        blended = premultiplied_crossfade(self.image(generated, 0), self.image(generated, -1), .5)
+        self.assertEqual(clusters(blended), 2)
+        # And the moving shape is opaque throughout, so it is not hidden by alpha.
+        for index in range(1, 5):
+            alpha = np.asarray(self.image(generated, index))[:, :, 3]
+            self.assertTrue(np.all(alpha[alpha > 0] == 255))
+
+    def test_morph_group_dropped_when_generated_frame_removed(self):
+        project = self.morph_setup()
+        body = self.morph_body(project, [
+            {'label': '左上', 'first': {'x': 4, 'y': 10}, 'second': {'x': 20, 'y': 10}},
+            {'label': '右下', 'first': {'x': 9, 'y': 19}, 'second': {'x': 25, 'y': 19}},
+            {'label': '左下', 'first': {'x': 4, 'y': 19}, 'second': {'x': 20, 'y': 19}},
+            {'label': '右上', 'first': {'x': 9, 'y': 10}, 'second': {'x': 25, 'y': 10}},
+        ])
+        generated = self.call('POST', self.base(project) + '/morph', body)
+        project = generated['project']
+        group = generated['group']
+        kept = project['frames'][0]['id']
+        project = self.mutate(project, 'frames/remove', {'frame_ids': [project['frames'][2]['id']]})
+        self.assertEqual(project['morph_groups'], [])
+        self.assertEqual(self.call('GET', self.base(project) + '/morph'), [])
+        # The removed frame is gone and the originals are untouched.
+        self.assertEqual(len(project['frames']), 5)
+        self.assertEqual(project['frames'][0]['id'], kept)
+        response = self.client.post(self.base(project) + '/morph/recompute',
+                                    json={**self.morph_body(project, [
+                                        {'label': '左上', 'first': {'x': 4, 'y': 10}, 'second': {'x': 20, 'y': 10}},
+                                        {'label': '右下', 'first': {'x': 9, 'y': 19}, 'second': {'x': 25, 'y': 19}},
+                                    ]), 'group': group})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('来源记录', response.json['error'])
+        response.close()
+
+    def test_morph_group_survives_project_archive_roundtrip(self):
+        project = self.morph_setup()
+        body = self.morph_body(project, [
+            {'label': '左上', 'first': {'x': 4, 'y': 10}, 'second': {'x': 20, 'y': 10}},
+            {'label': '右下', 'first': {'x': 9, 'y': 19}, 'second': {'x': 25, 'y': 19}},
+            {'label': '左下', 'first': {'x': 4, 'y': 19}, 'second': {'x': 20, 'y': 19}},
+            {'label': '右上', 'first': {'x': 9, 'y': 10}, 'second': {'x': 25, 'y': 10}},
+        ])
+        generated = self.call('POST', self.base(project) + '/morph', body)
+        project = generated['project']
+        bundle = project_bundle(self.store, project)
+        response = self.client.post('/api/import-bundle', data={'file': (io.BytesIO(bundle), 'project.zip')})
+        self.assertEqual(response.status_code, 201, response.json)
+        response.close()
+        restored = self.store.get(response.json['id'])
+        self.assertEqual(len(restored['morph_groups']), 1)
+        self.assertEqual(restored['morph_groups'][0]['count'], 4)
+        self.assertEqual(restored['morph_groups'][0]['pairs'], project['morph_groups'][0]['pairs'])
+
     def test_app_reload_persistence(self):
         project = self.paint(self.new())
         another = create_app(self.temp.name)

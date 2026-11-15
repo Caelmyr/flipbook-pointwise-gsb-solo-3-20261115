@@ -127,7 +127,17 @@ def catalog():
             number('count', '插入过渡帧数量', 6, 1, 60),
             number('duration', '过渡帧毫秒', 80, 20, 10000),
             select('easing', '缓动', 'linear', EASING),
-        ], note='按预乘Alpha交叉插值，避免透明边缘出现错误色边，合成的新帧可独立编辑。',
+        ], note='整帧按预乘Alpha交叉插值；两个动作的结构差别大时会出现两套轮廓，这种情况请改用“特征对应中间帧”。',
+    ))
+    tools.append(tool(
+        'morph', '特征对应中间帧', '动画', 'morph', [
+            {'name': 'first', 'label': '起始原画', 'type': 'frame', 'default': 'current'},
+            {'name': 'second', 'label': '结束原画', 'type': 'frame', 'default': 'next'},
+            number('count', '生成过渡帧数', 6, 1, 60),
+            number('duration', '每帧毫秒', 80, 20, 10000),
+            select('easing', '缓动', 'smoothstep', [item for item in EASING if item[0] != 'steps']),
+            select('merge', '合成方式', 'dither', [('dither', '有序保留原色'), ('blend', '颜色混合，轮廓取并集')]),
+        ], note='在两帧上标出对应特征位置并标记局部显露范围，按时间生成中间帧；对应关系扭转或冲突时会明确指出。',
     ))
     tools.append(tool(
         'tween-path', '贝塞尔路径动画', '动画', 'tween/path', [

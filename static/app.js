@@ -1,5 +1,5 @@
 const $=id=>document.getElementById(id);
-const S={project:null,frame:null,layer:null,projects:[],selected:new Set(),catalog:null,busy:false,points:[],drawing:false,play:false,playIndex:0,playStart:0,playSchedule:[],image:null,requestToken:0};
+const S=window.S={project:null,frame:null,layer:null,projects:[],selected:new Set(),catalog:null,busy:false,points:[],drawing:false,play:false,playIndex:0,playStart:0,playSchedule:[],image:null,requestToken:0};
 let jobTimer=null,previewURL=null,playRAF=null,mapTimer=null;
 const names={frame_count:'帧数',total_duration:'总时长 ms',average_fps:'平均帧率',visible_pixels:'可见像素',coverage_percent:'覆盖率 %',partial_alpha_pixels:'半透明像素',visible_colors:'可见颜色数',touches_edge:'内容触及画布边界',empty:'完全透明',duration:'时长 ms',name:'名称',index:'序号',warnings:'预检提示',duplicate_groups:'重复帧组',frames:'动画帧',motion:'质心运动',alpha_centroid:'透明度质心',png_bytes:'PNG字节数',bounds:'可见包围框',mean_rgb:'平均RGB',source_duration:'源时长',target_duration:'目标时长',target_frames:'目标帧数',actual_fps:'实际帧率',colors:'颜色清单',percent:'使用比例 %',unique_colors:'独立颜色数',transparent_pixels:'全透明像素',opaque_pixels:'不透明像素',partial_pixels:'半透明像素',changed_pixels:'变化像素',changed_percent:'变化比例 %',mean_absolute_rgba_difference:'平均RGBA差异',occupancy_percent:'图集利用率 %',source_revision:'来源修订',valid:'检查通过',checked:'检查素材数',missing:'缺失素材',wrong_size:'尺寸错误',warning:'说明',note:'说明',collision:'发生碰撞',overlap_pixels:'重叠像素',overlap_bounds:'重叠包围框',page_count:'图集页数',sprite_count:'精灵数量',stored_assets:'保存的素材数',active_assets:'当前素材数',history_entries:'历史记录数'};
 function label(key){return names[key]||key.replaceAll('_',' ')}
@@ -60,7 +60,7 @@ function renderData(data,target,depth=0){
 }
 function jsonDownload(data,name='result.json'){const link=element('a');const u=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));link.href=u;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
 function showData(title,data){const body=dialog(title);renderData(data,body);const b=element('button','下载完整JSON');b.onclick=()=>jsonDownload(data);body.append(b)}
-function showBlob(blob,target,name='preview.png'){if(previewURL)URL.revokeObjectURL(previewURL);previewURL=URL.createObjectURL(blob);const image=element('img',undefined,'preview');image.src=previewURL;const a=element('a','↓ 下载图像');a.href=previewURL;a.download=name;target.append(image,element('p'),a)}
+function showBlob(blob,target,name='preview.png'){if(previewURL)URL.revokeObjectURL(previewURL);previewURL=URL.createObjectURL(blob);const image=element('img',undefined,'preview');image.alt=name;image.src=previewURL;const a=element('a','↓ 下载图像');a.href=previewURL;a.download=name;target.append(image,element('p'),a)}
 async function loadProjects(selectId=null){
   const query=new URLSearchParams({query:$('search').value,archived:$('archived').checked});S.projects=await api('/api/projects?'+query);$('projectCount').textContent=S.projects.length;$('projectList').replaceChildren();
   for(const p of S.projects){const card=element('div',undefined,'project-card');card.classList.toggle('active',S.project?.id===p.id);card.dataset.id=p.id;const img=element('img');img.src=`/api/projects/${p.id}/frames/${p.thumbnail_frame}/image?rev=${p.revision}`;img.alt=p.name;card.append(img,element('b',p.name),element('small',`${p.width}×${p.height} · ${p.frame_count} 帧 · ${p.duration}ms`));card.onclick=guard(()=>openProject(p.id));$('projectList').append(card)}
@@ -148,7 +148,8 @@ function openToolbox(group='全部'){
   const body=dialog('动画与图像工具箱'),nav=element('div',undefined,'group-tabs');for(const category of ['全部',...new Set(S.catalog.tools.map(t=>t.group))]){const b=element('button',category);if(category===group)b.className='primary';b.onclick=()=>openToolbox(category);nav.append(b)}const recipeButton=element('button','像素效果配方');recipeButton.onclick=guard(openRecipes);nav.append(recipeButton);body.append(nav);const grid=element('div',undefined,'tool-list');for(const tool of S.catalog.tools.filter(t=>group==='全部'||t.group===group)){const b=element('button',undefined,'tool-card');b.append(element('small',tool.group),element('b',tool.title),element('p',tool.note));b.onclick=guard(()=>openTool(tool.key));grid.append(b)}body.append(grid);
 }
 function openTool(key){
-  project();const tool=S.catalog.tools.find(t=>t.key===key);const body=dialog(tool.title),layout=element('div',undefined,'dialog-grid'),controls=element('div'),output=element('div',undefined,'tool-output');controls.append(element('p',tool.note,'hint'));controls.append(element('p',`当前第${project().frames.findIndex(f=>f.id===S.frame)+1}帧；目标 ${ids().length} 帧。`,'muted'));
+  project();const tool=S.catalog.tools.find(t=>t.key===key);if(tool.key==='morph'){return openMorph()}
+  const body=dialog(tool.title),layout=element('div',undefined,'dialog-grid'),controls=element('div'),output=element('div',undefined,'tool-output');controls.append(element('p',tool.note,'hint'));controls.append(element('p',`当前第${project().frames.findIndex(f=>f.id===S.frame)+1}帧；目标 ${ids().length} 帧。`,'muted'));
   controls.append(form(tool.fields,'运行 '+tool.title,async values=>{
     output.replaceChildren(element('p','正在处理…','muted'));const path=endpoint(tool.path.replace('{frame}',currentFrame().id)),data=toolData(values);if(tool.key==='collision')data.image=true;let result;
     await work('正在执行 '+tool.title+'…',async()=>{result=tool.method==='GET'?await api(path):await post(path,data);if(tool.output==='project')await acceptProject(result)});output.replaceChildren();
@@ -300,4 +301,181 @@ async function openAtlasWorkspace(identifier){
   }
   body.append(element('h3','另建图集工程'));
   body.append(form([text('name','工程名称','游戏图集'),num('width','图集宽',256,32,2048),num('height','图集高',256,32,2048),num('reserve','每侧原画预留像素',4,0,32),num('padding','图块间隔',1,0,16),num('extrude','边缘外扩',1,0,8),check('rotate','允许旋转')],'创建图集工程',async values=>{await mutate('建立图集工程…',endpoint('atlas-workspaces'),values);await openAtlasWorkspace(project().atlas_workspaces.at(-1).id)}));
+}
+
+// Feature correspondence in-betweens: mark matching features on two key
+// drawings, mark which local area should come from which drawing, then step
+// through time and generate real editable frames.
+const MORPH={groups:[],pairIndex:0,first:null,second:null,pairs:[],reveal:null,plan:null,sheet:null};
+function morphFrameSelect(label,value,onchange){const select=element('select');for(const [id,name]of frameChoices())select.append(new Option(name,id));if(value&&project().frames.some(f=>f.id===value))select.value=value;select.onchange=()=>onchange(select.value);const wrap=element('label',label);wrap.append(select);return wrap}
+function morphPointFromEvent(canvas,event){const rect=canvas.getBoundingClientRect();return [Math.max(0,Math.min(project().width-1,Math.floor((event.clientX-rect.left)/rect.width*project().width))),Math.max(0,Math.min(project().height-1,Math.floor((event.clientY-rect.top)/rect.height*project().height)))]}
+function morphCanvas(zoom=6){
+  const canvas=element('canvas');canvas.width=project().width;canvas.height=project().height;canvas.className='morph-canvas';
+  canvas.style.width=canvas.width*zoom+'px';canvas.style.height=canvas.height*zoom+'px';
+  return canvas;
+}
+async function morphDrawKey(canvas,frameId,side){
+  const ctx=canvas.getContext('2d');ctx.imageSmoothingEnabled=false;
+  await new Promise(resolve=>{const image=new Image();image.onload=()=>{ctx.drawImage(image,0,0,canvas.width,canvas.height);resolve()};image.onerror=resolve;image.src=`/api/projects/${project().id}/frames/${frameId}/image?rev=${project().revision}`});
+  const scale=canvas.width/project().width;ctx.lineWidth=Math.max(1,1/scale);
+  MORPH.pairs.forEach((pair,index)=>{const point=pair[side];if(!point)return;ctx.strokeStyle=index===MORPH.pairIndex?'#f8cc65':'#73dfb9';ctx.beginPath();ctx.moveTo(point[0]+.5,point[1]+.5);ctx.lineTo(point[0]+.5,point[1]+.5);ctx.stroke();ctx.fillStyle=index===MORPH.pairIndex?'#f8cc65':'#73dfb9';ctx.fillRect(point[0],point[1],1,1);ctx.font=`${Math.max(4,Math.floor(8/scale*0.9))}px sans-serif`;ctx.fillText(String(index+1),point[0]+1.5,Math.max(4,point[1]-1));
+    if(side==='first'&&pair.reveal){ctx.strokeStyle='#ff9db4aa';ctx.setLineDash([2,2]);ctx.strokeRect(pair.reveal.x+.5,pair.reveal.y+.5,pair.reveal.width,pair.reveal.height);ctx.setLineDash([])}});
+}
+async function openMorph(groupId=null){
+  project();const body=dialog('特征对应中间帧');
+  body.append(element('p','在两帧原画上点出同一特征的位置，必要时为局部区域标记“从哪一帧显露”。生成前先检查对应关系；透明边缘随形状移动，不会靠降低透明度掩盖错位。','hint'));
+  const layout=element('div',undefined,'morph-layout'),left=element('div',undefined,'morph-panel'),right=element('div',undefined,'morph-panel');layout.append(left,right);body.append(layout);
+  const frames=project().frames;
+  MORPH.first=MORPH.first||S.frame||frames[0].id;
+  if(!frames.some(f=>f.id===MORPH.first)||frames.find(f=>f.id===MORPH.first).morph_group)MORPH.first=frames[0].id;
+  // Pick the next key drawing, never a previously generated in-between.
+  const startIndex=frames.findIndex(f=>f.id===MORPH.first);
+  const nextKey=frames.slice(startIndex+1).find(f=>!f.morph_group&&f.id!==MORPH.first);
+  if(!MORPH.second||!frames.some(f=>f.id===MORPH.second)||MORPH.second===MORPH.first||frames.find(f=>f.id===MORPH.second).morph_group){
+    MORPH.second=(nextKey||frames.find(f=>!f.morph_group&&f.id!==MORPH.first)||frames[0]).id;
+  }
+  const firstCanvas=morphCanvas(6),secondCanvas=morphCanvas(6);
+  const statusBox=element('div','','form-error'),warningBox=element('div','','hint'),sheetBox=element('div','','tool-output'),orderBox=element('div','','tool-output');
+  const pairList=element('div','','pair-list');
+  let activeGroup=null,lastPlan=null;
+  const settingsFields=[num('count','生成过渡帧数',6,1,60),num('duration','每帧毫秒',80,20,10000),num('total','或指定总时长毫秒（0为按每帧乘以帧数）',0,0,600000),select('easing','缓动','smoothstep',[['linear','线性'],['ease_in','加速'],['ease_out','减速'],['ease_in_out','加速减速'],['smoothstep','平滑']]),select('merge','合成方式','dither',[['dither','有序保留原色'],['blend','颜色混合，轮廓取并集']]),select('reveal_at','全局显露切换时间','0.5',[['0.35','较早'],['0.5','中段'],['0.65','较晚']])];
+  function valueOf(name){return $('dialogBody').querySelector(`[name="${name}"]`).value}
+  function payload(){
+    const total=Number(valueOf('total'))||0;
+    return {first:MORPH.first,second:MORPH.second,pairs:pairPayload(),count:Number(valueOf('count')),duration:Number(valueOf('duration')),total:total||undefined,easing:valueOf('easing'),merge:valueOf('merge'),reveal:{at:Number(valueOf('reveal_at'))}};
+  }
+  function drawAll(){morphDrawKey(firstCanvas,MORPH.first,'first');morphDrawKey(secondCanvas,MORPH.second,'second')}
+  firstCanvas.onclick=guard(async e=>{setPoint('first',morphPointFromEvent(firstCanvas,e));await drawAll();refreshPairs();invalidate()});
+  secondCanvas.onclick=guard(async e=>{setPoint('second',morphPointFromEvent(secondCanvas,e));await drawAll();refreshPairs();invalidate()});
+  function setPoint(side,point){
+    // Clicking the same drawing again moves the current mark; the other
+    // drawing keeps its own mark so the pair stays matched one-to-one.
+    const current=MORPH.pairs[MORPH.pairIndex];
+    if(!current){MORPH.pairs.push({label:`特征 ${MORPH.pairs.length+1}`,first:side==='first'?point:null,second:side==='second'?point:null});MORPH.pairIndex=MORPH.pairs.length-1;return}
+    current[side]=point;
+    if(!current.first||!current.second){
+      // A fresh pair that still misses one side: jump to the next empty one.
+      const empty=MORPH.pairs.findIndex(p=>!p.first||!p.second);
+      if(empty>=0)MORPH.pairIndex=empty;
+    }
+  }
+  function pairPayload(){return MORPH.pairs.filter(p=>p.first&&p.second).map(p=>({label:p.label,first:{x:p.first[0],y:p.first[1]},second:{x:p.second[0],y:p.second[1]},...(p.reveal?{reveal:p.reveal}:{})}))}
+  function refreshPairs(){
+    pairList.replaceChildren();
+    MORPH.pairs.forEach((pair,index)=>{
+      const row=element('div','','pair-row');row.classList.toggle('active',index===MORPH.pairIndex);
+      const mark=element('button',`${index+1}. ${pair.label}`);mark.onclick=()=>{MORPH.pairIndex=index;refreshPairs();drawAll()};
+      const firstText=element('small',pair.first?`甲 ${pair.first[0]},${pair.first[1]}`:'甲 未标');
+      const secondText=element('small',pair.second?`乙 ${pair.second[0]},${pair.second[1]}`:'乙 未标');
+      const reveal=element('button',pair.reveal?`显露：${pair.reveal.from==='first'?'甲':'乙'} @ ${pair.reveal.at}`:'局部显露');
+      reveal.onclick=guard(()=>openReveal(index));
+      const remove=element('button','移除');remove.onclick=()=>{MORPH.pairs.splice(index,1);MORPH.pairIndex=Math.max(0,Math.min(index,MORPH.pairs.length-1));refreshPairs();drawAll();invalidate()};
+      row.append(mark,firstText,secondText,reveal,remove);pairList.append(row);
+    });
+    const add=element('button','＋ 新特征点');add.onclick=()=>{MORPH.pairs.push({label:`特征 ${MORPH.pairs.length+1}`,first:null,second:null});MORPH.pairIndex=MORPH.pairs.length-1;refreshPairs();drawAll()};pairList.append(add);
+    const clear=element('button','全部清除');clear.onclick=()=>{MORPH.pairs=[{label:'特征 1',first:null,second:null}];MORPH.pairIndex=0;refreshPairs();drawAll();invalidate()};pairList.append(clear);
+  }
+  function invalidate(){
+    // Any edit to the marks invalidates the last plan, so preview/generate go
+    // back to disabled until the correspondence is checked again.
+    lastPlan=null;statusBox.textContent='';warningBox.textContent='';orderBox.replaceChildren();sheetBox.replaceChildren();MORPH.sheet=null;
+    previewButton.disabled=true;generateButton.disabled=true;
+  }
+  function openReveal(index){
+    const pair=MORPH.pairs[index];
+    if(!pair.first)throw Error('请先在甲帧标出这个特征');
+    const reveal=pair.reveal||{from:'second',at:.5,feather:8,x:Math.max(0,Math.min(Math.round(pair.first[0]-8),project().width-16)),y:Math.max(0,Math.min(Math.round(pair.first[1]-8),project().height-16)),width:Math.min(16,project().width),height:Math.min(16,project().height)};
+    const mini=dialog('局部显露范围：'+pair.label);
+    mini.append(element('p','红色区域在切换时间之前只显示“显露来源帧”的局部；另一帧的同一局部不会同时出现。切换时间0为从未切换，1为整段都显示来源帧。','hint'));
+    const canvas=morphCanvas(6);canvas.className='morph-canvas';
+    const plate=element('div');plate.append(canvas);mini.append(plate);
+    const fields=[select('from','显露来源帧','second',[['second','乙帧（结束原画）'],['first','甲帧（起始原画）']]),num('at','切换时间 0–1',.5,0,1),num('feather','边缘羽化像素',8,0,64)];
+    const formBox=form(fields,'保存显露范围',async data=>{pair.reveal={from:data.from,at:data.at,feather:data.feather,x:reveal.x,y:reveal.y,width:reveal.width,height:reveal.height};await drawAll();await openMorph(activeGroup?.group||null)});
+    formBox.querySelector('[name="from"]').value=reveal.from;formBox.querySelector('[name="at"]').value=reveal.at;formBox.querySelector('[name="feather"]').value=reveal.feather;
+    const widthField=field(num('width','范围宽度像素',16,2,project().width));widthField.querySelector('input').value=reveal.width;widthField.querySelector('input').oninput=e=>{reveal.width=Math.max(2,Math.min(project().width-reveal.x,Number(e.target.value)||reveal.width));paint()};
+    const heightField=field(num('height','范围高度像素',16,2,project().height));heightField.querySelector('input').value=reveal.height;heightField.querySelector('input').oninput=e=>{reveal.height=Math.max(2,Math.min(project().height-reveal.y,Number(e.target.value)||reveal.height));paint()};
+    formBox.insertBefore(heightField,formBox.firstChild);formBox.insertBefore(widthField,formBox.firstChild);
+    mini.append(formBox);
+    canvas.title='点击把显露区域中心放到该像素';
+    canvas.onclick=e=>{const point=morphPointFromEvent(canvas,e);reveal.x=Math.max(0,Math.min(project().width-reveal.width,Math.round(point[0]-reveal.width/2)));reveal.y=Math.max(0,Math.min(project().height-reveal.height,Math.round(point[1]-reveal.height/2)));paint()};
+    async function paint(){
+      canvas.width=project().width;canvas.height=project().height;canvas.style.width=canvas.width*6+'px';canvas.style.height=canvas.height*6+'px';
+      await morphDrawKey(canvas,MORPH.first,'first');
+      const ctx=canvas.getContext('2d');ctx.strokeStyle='#ff9db4';ctx.lineWidth=Math.max(1,1/6);ctx.setLineDash([3,3]);
+      ctx.strokeRect(reveal.x+.5,reveal.y+.5,Math.max(1,reveal.width),Math.max(1,reveal.height));ctx.setLineDash([]);
+    }
+    paint();
+  }
+  const firstWrap=element('div','','morph-key');
+  firstWrap.append(element('h3','甲 · 起始原画'),morphFrameSelect('起始原画',MORPH.first,async value=>{MORPH.first=value;drawAll();invalidate()}),firstCanvas);
+  const secondWrap=element('div','','morph-key');
+  secondWrap.append(element('h3','乙 · 结束原画'),morphFrameSelect('结束原画',MORPH.second,async value=>{if(value===MORPH.first)throw Error('请选择与甲不同的原画帧');MORPH.second=value;await drawAll();invalidate()}),secondCanvas);
+  left.append(element('p','先点甲帧再点乙帧标出同一特征；数字为序号，虚线框为局部显露范围。两张原画必须是时间轴上相邻的两帧。','muted'),firstWrap,secondWrap);
+  const settings=form(settingsFields,'用以上设置检查对应关系',async()=>{await refreshPlan()});
+  right.append(element('h3','生成设置'),settings);
+  async function refreshPlan(){
+    if(MORPH.first===MORPH.second){throw Error('请选择两个不同的原画帧')}
+    if(pairPayload().length<2||MORPH.pairs.some(p=>!p.first||!p.second)){throw Error('至少需要两个完整特征对（甲、乙都已标出）')}
+    const result=await work('检查对应关系…',()=>post(endpoint('morph/plan'),payload()));
+    status(result.conflict?'对应关系需要调整':'对应关系可用，可预览或生成');
+    lastPlan=result;MORPH.plan=result;
+    statusBox.textContent=result.conflict||'';
+    warningBox.textContent=(result.warnings||[]).map(item=>item.note).join('；');
+    orderBox.replaceChildren();
+    const summary={生成帧:result.count,每帧毫秒:result.duration,总时长:result.total,缓动:result.easing,合成:result.merge,插入在第一张原画之后:result.adjacent_originals?'是':'否'};
+    renderData(summary,orderBox);
+    const rows=result.rows.map(row=>({位置:row.position,角色:row.role==='generated'?'生成中间帧':row.role==='first'?'甲·原画':'乙·原画',名称:row.name,时长ms:row.duration,开始ms:row.start??'—'}));
+    renderData(rows,orderBox);
+    if(result.timeline_note)orderBox.append(element('p',result.timeline_note,'hint'));
+    previewButton.disabled=Boolean(result.conflict);generateButton.disabled=Boolean(result.conflict||!result.fits_frame_limit);recomputeButton.disabled=!activeGroup;
+  }
+  const previewButton=element('button','沿时间预览所有中间帧');previewButton.disabled=true;
+  previewButton.onclick=guard(async()=>{const blob=await work('生成预览…',()=>post(endpoint('morph/preview'),payload()));sheetBox.replaceChildren();showBlob(blob,sheetBox,'morph-sheet.png');status('预览已生成；生成后才是可编辑的真实帧')});
+  const generateButton=element('button','生成中间帧','primary');generateButton.disabled=true;
+  generateButton.onclick=guard(async()=>{const result=await work('生成中间帧…',()=>post(endpoint('morph'),{...payload(),revision:project().revision}));await acceptProject(result.project);status('中间帧已按顺序插入，原画两帧与其他帧保持不变');await openMorph()});
+  const recomputeButton=element('button','按调整后的对应点重算这一组');
+  recomputeButton.onclick=guard(async()=>{if(!activeGroup)throw Error('请先在下方载入一组过渡，或在生成一次后重算');const result=await work('按同一对原画重算…',()=>post(endpoint('morph/recompute'),{...payload(),group:activeGroup.group,revision:project().revision}));await acceptProject(result.project);status('已重算同一对原画，帧数、时长与时间轴位置未改变');await openMorph()});
+  right.append(previewButton,generateButton,statusBox,warningBox,recomputeButton);
+  right.append(element('h3','特征对应点'),pairList);
+  right.append(element('h3','时间与帧序'),orderBox);
+  right.append(element('h3','预览'),sheetBox);
+  const groupsBox=element('div','','tool-output');
+  right.append(element('h3','已有过渡组'),groupsBox);
+  const groups=await api(endpoint('morph')).catch(error=>{groupsBox.append(element('p',error.message,'form-error'));return[]});
+  if(!groups.length)groupsBox.append(element('p','尚无过渡组；生成一次后可在这里载入、查看顺序并重算。','muted'));
+  for(const group of groups){
+    const card=element('div','','version-card');
+    if(group.error){card.append(element('h3','过渡组不可用'),element('p',group.error,'form-error'));groupsBox.append(card);continue}
+    card.append(element('h3',`${group.first.name} → ${group.second.name}`),element('p',`${group.count} 帧 · 共 ${group.duration} ms · ${group.contiguous?'顺序连续':'时间轴上已插入其他帧'}`));
+    renderData(group.rows.map(row=>({位置:row.position,名称:row.name,时长ms:row.duration,开始ms:row.start??'—'})),card);
+    if(group.note)card.append(element('p',group.note,'hint'));
+    const open=element('button','载入这组对应点');open.onclick=guard(async()=>{await openMorph(group.group)});
+    const pick=element('button','把这组设为当前重算对象');pick.onclick=guard(()=>{activeGroup=group;recomputeButton.disabled=false;status('当前重算对象：'+group.first.name+' → '+group.second.name)});
+    card.append(open,pick);groupsBox.append(card);
+  }
+  function loadGroupPaints(pairs){MORPH.pairs=pairs.map(pair=>({label:pair.label,first:pair.first,second:pair.second,reveal:pair.reveal||null}));MORPH.pairIndex=0}
+  const loadNote=element('p','','hint');
+  if(activeGroup){recomputeButton.disabled=false;loadNote.textContent='当前重算对象：'+activeGroup.group}
+  right.append(loadNote);
+  refreshPairs();await drawAll();
+  const group=groupId?groups.find(item=>item.group===groupId):(activeGroup||groups.find(item=>!item.error));
+  if(group&&!group.error){
+    activeGroup=group;const detail=await api(endpoint('morph/'+group.group));
+    loadGroupPaints(detail.pairs);refreshPairs();await drawAll();
+    // Keep the stored timing on screen so adjusting marks does not silently
+    // change frame durations; the artist can still edit these fields.
+    MORPH.first=detail.first;MORPH.second=detail.second;
+    settingsFields.forEach(def=>{
+      const input=settings.querySelector(`[name="${def.name}"]`);if(!input)return;
+      if(def.name==='count')input.value=detail.count;
+      if(def.name==='total')input.value=detail.duration;
+      if(def.name==='easing')input.value=detail.easing;
+      if(def.name==='merge')input.value=detail.merge;
+    });
+    settings.dispatchEvent(new Event('change',{bubbles:true}));
+    const firstSelect=firstWrap.querySelector('select'),secondSelect=secondWrap.querySelector('select');
+    if(firstSelect)firstSelect.value=detail.first;if(secondSelect)secondSelect.value=detail.second;
+    recomputeButton.disabled=false;loadNote.textContent='当前重算对象：'+group.first.name+' → '+group.second.name+'（重算会保留帧数、时长与时间轴位置）';
+    await refreshPlan().catch(error=>{status(error.message,true)});
+  }
 }

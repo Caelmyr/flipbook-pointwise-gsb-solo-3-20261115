@@ -124,6 +124,9 @@ def validate_structure(project):
     if 'ink_roles' in project:
         from .role_tools import validate_entries
         validate_entries(project['ink_roles'])
+    if 'morph_groups' in project:
+        from .morph import validate_entries
+        validate_entries(project['morph_groups'], project)
     if project.get('schema') != SCHEMA:
         raise v.Invalid('不支持的项目版本')
     v.key(project.get('id'))
