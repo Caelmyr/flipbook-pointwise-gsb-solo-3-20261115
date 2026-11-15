@@ -29,8 +29,12 @@ test_tilemap_fill_paint_and_export (test_workflows.Workflows.test_tilemap_fill_p
 test_tilemap_reference_blocks_frame_deletion (test_workflows.Workflows.test_tilemap_reference_blocks_frame_deletion) ... ok
 test_time_resample_total_preserved (test_workflows.Workflows.test_time_resample_total_preserved) ... ok
 test_transform_tween_end_state (test_workflows.Workflows.test_transform_tween_end_state) ... ok
+test_turntable_front_and_back_views (test_workflows.Workflows.test_turntable_front_and_back_views) ... ok
+test_turntable_generates_independent_project (test_workflows.Workflows.test_turntable_generates_independent_project) ... ok
+test_turntable_preview_endpoint_and_validation (test_workflows.Workflows.test_turntable_preview_endpoint_and_validation) ... ok
+test_turntable_side_occlusion_and_holes (test_workflows.Workflows.test_turntable_side_occlusion_and_holes) ... ok
 
 ----------------------------------------------------------------------
-Ran 31 tests in 1.112s
+Ran 35 tests in 1.110s
 
 OK

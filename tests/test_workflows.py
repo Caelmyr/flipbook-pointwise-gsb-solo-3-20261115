@@ -18,6 +18,7 @@ from flipbook.atlas import build_atlas
 from flipbook.atlas_import import unpack_sprite, validate_atlas
 from flipbook.ninepatch import nine_slice, seam_blend
 from flipbook.exporting import animated_gif, animated_png, project_bundle
+from flipbook.turntable import render_extrusion, extrusion_settings, fit_layout, canvas_layout
 
 
 class Workflows(unittest.TestCase):
@@ -356,6 +357,80 @@ class Workflows(unittest.TestCase):
         actual = self.store.get(project['id'])
         self.assertEqual(actual['revision'], project['revision'])
         np.testing.assert_array_equal(original, np.asarray(self.image(actual)))
+
+    def test_turntable_front_and_back_views(self):
+        source = np.zeros((32, 32, 4), dtype=np.uint8)
+        source[4:21, 4:21] = (255, 0, 0, 255)
+        source[6:19, 6:19] = 0
+        source[26, 26] = (0, 0, 255, 255)
+        settings = extrusion_settings({'depth': 6})
+        front = np.asarray(render_extrusion(source, settings, 0, canvas_layout(32, 32)))
+        np.testing.assert_array_equal(front, source)
+        back = np.asarray(render_extrusion(source, settings, 180, canvas_layout(32, 32)))
+        mirrored = source[:, ::-1]
+        np.testing.assert_array_equal(back[:, :, 3], mirrored[:, :, 3])
+        visible = mirrored[:, :, 3] > 0
+        np.testing.assert_allclose(back[:, :, :3][visible].astype(float), mirrored[:, :, :3][visible] * .85, atol=1)
+        self.assertEqual(back[26, 5].tolist(), [0, 0, 217, 255])
+        angled = np.asarray(render_extrusion(source, settings, 45, canvas_layout(32, 32)))
+        self.assertEqual(angled[10:18, 10:18, 3].min(), 0)
+        soft = np.zeros((8, 8, 4), dtype=np.uint8)
+        soft[2:6, 2:6] = (255, 0, 0, 128)
+        front_soft = np.asarray(render_extrusion(soft, extrusion_settings({'depth': 4}), 0, canvas_layout(8, 8)))
+        np.testing.assert_array_equal(front_soft, soft)
+        side_soft = np.asarray(render_extrusion(soft, extrusion_settings({'depth': 4}), 90, canvas_layout(8, 8)))
+        row = side_soft[3]
+        self.assertTrue((row[row[:, 3] > 0][:, 3] == 255).all())
+
+    def test_turntable_side_occlusion_and_holes(self):
+        source = np.zeros((32, 32, 4), dtype=np.uint8)
+        source[4:21, 4:6] = (255, 0, 0, 255)
+        source[4:21, 19:21] = (0, 0, 255, 255)
+        settings = extrusion_settings({'depth': 6})
+        right = np.asarray(render_extrusion(source, settings, 90, canvas_layout(32, 32)))
+        pixels = right[10][right[10, :, 3] > 0]
+        self.assertEqual(len(pixels), 6)
+        self.assertTrue(((pixels[:, 2] > 100) & (pixels[:, 0] < 60)).all())
+        left = np.asarray(render_extrusion(source, settings, 270, canvas_layout(32, 32)))
+        pixels = left[10][left[10, :, 3] > 0]
+        self.assertTrue(((pixels[:, 0] > 100) & (pixels[:, 2] < 60)).all())
+        self.assertEqual(int(right[22, :, 3].sum()), 0)
+        self.assertEqual(int(left[25, :, 3].sum()), 0)
+
+    def test_turntable_preview_endpoint_and_validation(self):
+        project = self.paint(self.new())
+        frame = project['frames'][0]
+        data = self.call('POST', self.base(project) + '/turntable-preview', {'frame_id': frame['id'], 'depth': 8, 'angle': 90})
+        with Image.open(io.BytesIO(data)) as image:
+            self.assertEqual(image.convert('RGBA').getpixel((0, 0))[3], 0)
+        empty = self.new()
+        self.call('POST', self.base(empty) + '/turntable', {'frame_id': empty['frames'][0]['id']}, 400)
+        self.call('POST', self.base(project) + '/turntable', {'frame_id': frame['id'], 'start': 0, 'end': 720}, 400)
+        self.call('POST', self.base(project) + '/turntable', {'frame_id': frame['id'], 'depth': 0}, 400)
+
+    def test_turntable_generates_independent_project(self):
+        project = self.paint(self.new())
+        frame = project['frames'][0]
+        revision = project['revision']
+        created = self.call('POST', self.base(project) + '/turntable', {
+            'frame_id': frame['id'], 'depth': 8, 'start': 0, 'end': 360,
+            'count': 12, 'duration': 90, 'loop': True,
+        }, 201)
+        self.assertEqual(len(created['frames']), 12)
+        self.assertEqual((created['width'], created['height']), (36, 36))
+        self.assertTrue(all(item['duration'] == 90 for item in created['frames']))
+        source = self.store.get(project['id'])
+        self.assertEqual(source['revision'], revision)
+        self.assertEqual(len(source['frames']), 1)
+        images = [np.asarray(render_frame(self.store, created, item['id'])) for item in created['frames']]
+        self.assertTrue(all(image[0, 0, 3] == 0 for image in images))
+        self.assertGreater(len({image.tobytes() for image in images}), 4)
+        np.testing.assert_array_equal(images[0][2:34, 2:34], np.asarray(self.image(project)))
+        partial = self.call('POST', self.base(project) + '/turntable', {
+            'frame_id': frame['id'], 'depth': 4, 'start': 90, 'end': 270, 'count': 4, 'loop': False,
+        }, 201)
+        self.assertEqual(len(partial['frames']), 4)
+        self.assertNotEqual(partial['frames'][0]['name'], partial['frames'][-1]['name'])
 
     def test_app_reload_persistence(self):
         project = self.paint(self.new())

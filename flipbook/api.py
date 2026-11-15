@@ -654,6 +654,17 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
         data = body()
         return jsonify(Snapshots(store).compare(key, data.get('first'), data.get('second')))
 
+    @api.post('/projects/<key>/turntable-preview')
+    def turntable_preview(key):
+        from .turntable import preview_image
+        with store.lock:
+            return image_response(preview_image(store, store.get(key), body()))
+
+    @api.post('/projects/<key>/turntable')
+    def turntable(key):
+        from .turntable import build_turntable
+        return jsonify(build_turntable(store, key, body())), 201
+
     @api.post('/projects/<key>/resample')
     def resample(key):
         from .resampling import resample_project

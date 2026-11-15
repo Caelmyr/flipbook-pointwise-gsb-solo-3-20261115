@@ -301,3 +301,46 @@ async function openAtlasWorkspace(identifier){
   body.append(element('h3','另建图集工程'));
   body.append(form([text('name','工程名称','游戏图集'),num('width','图集宽',256,32,2048),num('height','图集高',256,32,2048),num('reserve','每侧原画预留像素',4,0,32),num('padding','图块间隔',1,0,16),num('extrude','边缘外扩',1,0,8),check('rotate','允许旋转')],'创建图集工程',async values=>{await mutate('建立图集工程…',endpoint('atlas-workspaces'),values);await openAtlasWorkspace(project().atlas_workspaces.at(-1).id)}));
 }
+
+$('turntable').onclick=guard(openTurntable);
+function openTurntable(){
+  project();const frame=currentFrame();
+  const body=dialog('立体挤出转台');
+  const layout=element('div',undefined,'dialog-grid'),controls=element('div'),output=element('div',undefined,'tool-output');
+  controls.append(element('p',`以当前帧「${frame.name}」的透明轮廓挤出带厚度的立体徽章：凹洞与分离部件保持镂空，正面、侧面与背面按视角正确遮挡。生成结果为独立新项目，原动画保持可编辑。`,'hint'));
+  const defs=[num('depth','挤出厚度（像素）',12,1,64),num('elevation','俯视仰角°',0,0,45),num('threshold','轮廓Alpha阈值',0,0,254),select('size','输出尺寸','fit',[['fit','适应内容（含留白）'],['canvas','原始画布']]),num('padding','适应内容边距',2,0,32),text('side_color','侧面固定颜色（留空自动明暗）',''),text('back_color','背面固定颜色（留空自动变暗）','')];
+  const inputs={},panel=element('div',undefined,'form');
+  for(const def of defs){const item=field(def);inputs[def.name]=item.querySelector('input,select');panel.append(item)}
+  controls.append(panel);
+  const angleLabel=element('p','预览角度 0°','muted');
+  const slider=element('input');slider.type='range';slider.min='0';slider.max='360';slider.step='1';slider.value='0';slider.style.width='100%';
+  const views=element('div',undefined,'inline-actions');
+  for(const [title,deg] of [['正面',0],['右侧面',90],['背面',180],['左侧面',270]]){const b=element('button',title);b.onclick=()=>{slider.value=String(deg);refresh()};views.append(b)}
+  controls.append(angleLabel,slider,views);
+  const img=element('img',undefined,'preview');img.alt='立体转台预览';const meta=element('p','正在生成预览…','muted');
+  output.append(img,meta);
+  controls.append(form([num('start','起始角度°',0,-360,360),num('end','结束角度°',360,-360,360),num('count','转台帧数',24,2,240),num('duration','帧时长毫秒',80,20,10000),check('loop','循环（末角度不重复）',true)],'生成透明背景转台动画（独立新项目）',async data=>{
+    const created=await work('渲染转台动画…',()=>post(endpoint('turntable'),{...extrudeParams(),...data,frame_id:frame.id}));
+    output.replaceChildren(element('p',`已生成 ${created.frames.length} 帧转台动画「${created.name}」，源动画未改动，仍可在原项目继续编辑。`,'hint'));
+    const open=element('button','打开生成的新项目','primary');open.onclick=guard(async()=>{S.frame=S.layer=null;await acceptProject(created);$('dialog').close()});
+    output.append(open);await refreshListOnly();status('转台动画已生成，可导出APNG/GIF/WebP');
+  }));
+  layout.append(controls,output);body.append(layout);
+  let timer=null,token=0;
+  function extrudeParams(){const data={};for(const [name,input] of Object.entries(inputs)){if(name==='side_color'||name==='back_color'){if(input.value.trim())data[name]=input.value.trim()}else if(input.tagName==='SELECT')data[name]=input.value;else data[name]=Number(input.value)}return data}
+  function refresh(){
+    angleLabel.textContent=`预览角度 ${slider.value}°`;
+    clearTimeout(timer);const current=++token;
+    timer=setTimeout(guard(async()=>{
+      let blob;
+      try{blob=await post(endpoint('turntable-preview'),{...extrudeParams(),angle:Number(slider.value),frame_id:frame.id})}
+      catch(error){meta.textContent=error.message;return}
+      if(current!==token)return;
+      if(previewURL)URL.revokeObjectURL(previewURL);
+      previewURL=URL.createObjectURL(blob);img.src=previewURL;meta.textContent='透明背景 · 棋盘格为透明区域';
+    }),180);
+  }
+  for(const input of Object.values(inputs)){input.onchange=refresh;if(input.type==='number'||input.type==='text')input.oninput=refresh}
+  slider.oninput=refresh;
+  refresh();
+}
