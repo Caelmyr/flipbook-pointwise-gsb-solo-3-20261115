@@ -1,5 +1,5 @@
 const $=id=>document.getElementById(id);
-const S={project:null,frame:null,layer:null,projects:[],selected:new Set(),catalog:null,busy:false,points:[],drawing:false,play:false,playIndex:0,playStart:0,playSchedule:[],image:null,requestToken:0};
+const S={project:null,frame:null,layer:null,projects:[],selected:new Set(),catalog:null,busy:false,points:[],drawing:false,play:false,playIndex:0,playStart:0,playSchedule:[],image:null,requestToken:0,float:null,floatImage:null,floatDraw:null,floatToken:0};
 let jobTimer=null,previewURL=null,playRAF=null,mapTimer=null;
 const names={frame_count:'帧数',total_duration:'总时长 ms',average_fps:'平均帧率',visible_pixels:'可见像素',coverage_percent:'覆盖率 %',partial_alpha_pixels:'半透明像素',visible_colors:'可见颜色数',touches_edge:'内容触及画布边界',empty:'完全透明',duration:'时长 ms',name:'名称',index:'序号',warnings:'预检提示',duplicate_groups:'重复帧组',frames:'动画帧',motion:'质心运动',alpha_centroid:'透明度质心',png_bytes:'PNG字节数',bounds:'可见包围框',mean_rgb:'平均RGB',source_duration:'源时长',target_duration:'目标时长',target_frames:'目标帧数',actual_fps:'实际帧率',colors:'颜色清单',percent:'使用比例 %',unique_colors:'独立颜色数',transparent_pixels:'全透明像素',opaque_pixels:'不透明像素',partial_pixels:'半透明像素',changed_pixels:'变化像素',changed_percent:'变化比例 %',mean_absolute_rgba_difference:'平均RGBA差异',occupancy_percent:'图集利用率 %',source_revision:'来源修订',valid:'检查通过',checked:'检查素材数',missing:'缺失素材',wrong_size:'尺寸错误',warning:'说明',note:'说明',collision:'发生碰撞',overlap_pixels:'重叠像素',overlap_bounds:'重叠包围框',page_count:'图集页数',sprite_count:'精灵数量',stored_assets:'保存的素材数',active_assets:'当前素材数',history_entries:'历史记录数'};
 function label(key){return names[key]||key.replaceAll('_',' ')}
@@ -70,10 +70,24 @@ async function openProject(id){if(S.busy)return;stopPlayback();const token=++S.r
 async function acceptProject(p){
   S.project=p;const valid=new Set(p.frames.map(f=>f.id));S.selected=new Set([...S.selected].filter(id=>valid.has(id)));if(!p.frames.some(f=>f.id===S.frame))S.frame=p.frames[0].id;
   const frame=currentFrame();if(!flatLayerNodes(frame.layers).some(l=>l.id===S.layer))S.layer=frame.layers[frame.layers.length-1].id;
+  if(S.float){const live=flatLayerNodes(frame.layers).find(l=>l.id===S.float.layer_id);if(!live||live.asset!==S.float.base_asset){status('浮动选区依据的像素已变化，已自动取消试排',true);clearFloating()}}
   S.points=[];S.drawing=false;$('projectName').textContent=p.name;$('projectInfo').textContent=`${p.width} × ${p.height} px · ${p.frames.length} 帧 · 修订 ${p.revision}`;
   $('timelineInfo').textContent=`${p.frames.length} 帧 / ${p.frames.reduce((a,f)=>a+f.duration,0)} ms · 已勾选 ${S.selected.size} 帧`;
-  $('undo').disabled=!p.undo.length;$('redo').disabled=!p.redo.length;renderRoleChoices();renderPalette();renderFrames();renderLayers();loadCanvas();await refreshListOnly();
+  $('undo').disabled=!p.undo.length;$('redo').disabled=!p.redo.length;renderRoleChoices();renderPalette();renderFrames();renderLayers();if(!S.float){loadCanvas();await restoreFloatingSession()}await refreshListOnly();
   const value=$('clipSelect').value;$('clipSelect').replaceChildren(new Option('完整时间轴',''));for(const clip of p.clips)$('clipSelect').append(new Option(clip.name,clip.id));if(p.clips.some(c=>c.id===value))$('clipSelect').value=value;
+}
+async function restoreFloatingSession(explicit=false){
+  if(!S.project)return false;
+  const layer=flatLayerNodes(currentFrame().layers).find(item=>item.id===S.layer);
+  if(!layer)return false;
+  try{
+    const sessions=await api(`/api/projects/${project().id}/floating?frame_id=${currentFrame().id}&layer_id=${layer.id}`);
+    const session=sessions[0];
+    if(!session||session.base_asset!==layer.asset)return false;
+    S.float=session;S.floatImage=null;S.floatDraw=null;$('floatShape').value=session.selection[0]?.shape||'rectangle';$('floatingBar').hidden=false;floatRefreshBar();await floatPreview();status('已恢复未确认的浮动试排；确认前不会写入撤销历史');return true;
+  }catch(error){if(explicit)throw error;
+    /* 无恢复会话时不打扰当前编辑 */
+    return false}
 }
 async function refreshListOnly(){
   const current=S.project;const query=new URLSearchParams({query:$('search').value,archived:$('archived').checked});S.projects=await api('/api/projects?'+query);$('projectCount').textContent=S.projects.length;$('projectList').replaceChildren();for(const p of S.projects){const card=element('div',undefined,'project-card');card.classList.toggle('active',current?.id===p.id);card.dataset.id=p.id;const img=element('img');img.src=`/api/projects/${p.id}/frames/${p.thumbnail_frame}/image?rev=${p.revision}`;img.alt=p.name;card.append(img,element('b',p.name),element('small',`${p.width}×${p.height} · ${p.frame_count}帧 · ${p.duration}ms`));card.onclick=guard(()=>openProject(p.id));$('projectList').append(card)}
@@ -89,26 +103,32 @@ function renderLayers(){
   target.append(form(fields,'保存图层属性',async data=>{const transform={};for(const k of ['x','y','scale_x','scale_y','rotation','flip_x','flip_y']){transform[k]=data[k];delete data[k]}await mutate('更新图层合成…',layerPath(),{...data,transform},'PATCH')}));
 }
 function loadCanvas(special=null){
-  if(!S.project)return;const frame=currentFrame();$('frameName').textContent=`${frame.name} / ${frame.duration}ms`;$('canvas').hidden=false;$('empty').hidden=true;const image=new Image();const token=`${S.project.id}/${frame.id}/${S.project.revision}/${Boolean(special)}/${$('onion').checked}`;$('canvas').dataset.token=token;
-  image.onload=()=>{if($('canvas').dataset.token!==token)return;S.image=image;$('canvas').width=project().width;$('canvas').height=project().height;drawCanvas()};image.onerror=()=>status('图像加载失败，请刷新项目',true);
+  if(!S.project)return;const frame=currentFrame();
+  if(S.float&&(frame.id!==S.float.frame_id||S.layer!==S.float.layer_id)){status('切换帧或图层后已退出浮动试排，未确认的变换未写入');clearFloating();return}
+  $('frameName').textContent=`${frame.name} / ${frame.duration}ms`;$('canvas').hidden=false;$('empty').hidden=true;const image=new Image();const token=`${S.project.id}/${frame.id}/${S.project.revision}/${Boolean(special)}/${$('onion').checked}`;$('canvas').dataset.token=token;
+  image.onload=()=>{if($('canvas').dataset.token!==token)return;S.image=image;$('canvas').width=project().width;$('canvas').height=project().height;if(!S.float)drawCanvas()};image.onerror=()=>status('图像加载失败，请刷新项目',true);
   const onion=$('onion').checked?'&previous=1&following=1':'';image.src=special||`/api/projects/${project().id}/frames/${frame.id}/image?rev=${project().revision}${onion}`;
 }
 function drawCanvas(){
-  if(!S.image)return;const canvas=$('canvas'),ctx=canvas.getContext('2d');ctx.clearRect(0,0,canvas.width,canvas.height);ctx.imageSmoothingEnabled=false;ctx.drawImage(S.image,0,0,canvas.width,canvas.height);const zoom=Number($('zoom').value);canvas.style.width=canvas.width*zoom+'px';canvas.style.height=canvas.height*zoom+'px';
+  if(!S.image&&!S.floatImage)return;const canvas=$('canvas'),ctx=canvas.getContext('2d');ctx.clearRect(0,0,canvas.width,canvas.height);ctx.imageSmoothingEnabled=false;const source=S.floatImage||S.image;if(source)ctx.drawImage(source,0,0,canvas.width,canvas.height);const zoom=Number($('zoom').value);canvas.style.width=canvas.width*zoom+'px';canvas.style.height=canvas.height*zoom+'px';
   if($('grid').checked&&zoom>=4&&canvas.width<=256&&canvas.height<=256){ctx.strokeStyle='#b5d6ef30';ctx.lineWidth=1/zoom;for(let x=0;x<=canvas.width;x+=8){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,canvas.height);ctx.stroke()}for(let y=0;y<=canvas.height;y+=8){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(canvas.width,y);ctx.stroke()}}
+  if(S.floatDraw&&S.floatDraw.preview){const p=S.floatDraw.preview;ctx.strokeStyle='#7ae2c2';ctx.lineWidth=1/zoom;ctx.setLineDash([4/zoom,3/zoom]);if(p.points){ctx.beginPath();p.points.forEach((q,i)=>i?ctx.lineTo(q[0]+.5,q[1]+.5):ctx.moveTo(q[0]+.5,q[1]+.5));ctx.stroke()}else{ctx.strokeRect(p.x+.5,p.y+.5,Math.max(0,p.width),Math.max(0,p.height))}ctx.setLineDash([])}
+  if(S.float&&!S.floatImage){const b=S.float.bounds;if(b){ctx.strokeStyle='#f8cc65';ctx.lineWidth=1/zoom;ctx.setLineDash([3/zoom,3/zoom]);ctx.strokeRect(b[0],b[1],b[2]-b[0],b[3]-b[1]);ctx.setLineDash([])}}
   if(S.points.length){ctx.strokeStyle=$('color').value;ctx.fillStyle=$('color').value;ctx.lineWidth=Math.max(1,Number($('brushSize').value));ctx.beginPath();S.points.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.stroke();for(const p of S.points)ctx.fillRect(Math.floor(p[0]),Math.floor(p[1]),1,1)}
 }
 for(const id of ['grid','zoom'])$(id).onchange=drawCanvas;$('onion').onchange=()=>loadCanvas();
 function canvasPoint(e){const rect=$('canvas').getBoundingClientRect();return [Math.max(0,Math.min(project().width-1,Math.floor((e.clientX-rect.left)/rect.width*project().width))),Math.max(0,Math.min(project().height-1,Math.floor((e.clientY-rect.top)/rect.height*project().height)))]}
 $('canvas').onpointerdown=guard(async e=>{
-  if(S.busy||S.play)return;const layer=currentLayer();if(layer.locked)throw Error('当前图层已锁定');const mode=$('brush').value;const point=canvasPoint(e);
+  if(S.busy||S.play)return;const layer=currentLayer();const mode=$('brush').value;const point=canvasPoint(e);
+  if(floatPointerDown(e))return;
+  if(layer.locked)throw Error('当前图层已锁定');
   if(mode==='eyedropper'){const result=await post(framePath('sample'),{point});$('color').value=result.hex.slice(0,7);status(`吸取颜色 ${result.hex}，最接近调色板 ${result.palette_match.nearest}`);return}
   if(mode==='polygon'){S.points.push(point);drawCanvas();return}
   S.points=[point];if(mode==='fill'||mode==='text'){await submitDrawing();return}S.drawing=true;$('canvas').setPointerCapture(e.pointerId);drawCanvas();
 });
-$('canvas').onpointermove=e=>{if(!S.project)return;const point=canvasPoint(e);$('coordinate').textContent=`${point[0]}, ${point[1]}`;if(!S.drawing||S.busy)return;const mode=$('brush').value;if(['pencil','erase'].includes(mode)){const last=S.points.at(-1);if(point[0]!==last[0]||point[1]!==last[1])S.points.push(point)}else S.points=[S.points[0],point];if(S.points.length>2500)S.points=S.points.filter((_,i)=>i%2===0);drawCanvas()};
-$('canvas').onpointerup=guard(async e=>{if(!S.drawing)return;S.drawing=false;const point=canvasPoint(e);if(['line','rectangle','ellipse','gradient'].includes($('brush').value))S.points=[S.points[0],point];await submitDrawing()});
-$('canvas').onpointercancel=()=>{S.drawing=false;S.points=[];drawCanvas()};
+$('canvas').onpointermove=e=>{if(!S.project)return;if(floatPointerMove(e))return;const point=canvasPoint(e);$('coordinate').textContent=`${point[0]}, ${point[1]}`;if(!S.drawing||S.busy)return;const mode=$('brush').value;if(['pencil','erase'].includes(mode)){const last=S.points.at(-1);if(point[0]!==last[0]||point[1]!==last[1])S.points.push(point)}else S.points=[S.points[0],point];if(S.points.length>2500)S.points=S.points.filter((_,i)=>i%2===0);drawCanvas()};
+$('canvas').onpointerup=guard(async e=>{if(floatPointerUp(e))return;if(!S.drawing)return;S.drawing=false;const point=canvasPoint(e);if(['line','rectangle','ellipse','gradient'].includes($('brush').value))S.points=[S.points[0],point];await submitDrawing()});
+$('canvas').onpointercancel=()=>{floatDrag=null;S.drawing=false;S.points=[];if(S.floatDraw)S.floatDraw.preview=null;drawCanvas()};
 async function submitDrawing(){
   if(!S.points.length)return;const mode=$('brush').value;const data={tool:mode,color:$('color').value+Math.max(0,Math.min(255,Number($('celAlpha').value))).toString(16).padStart(2,'0'),secondary:$('secondary').value,size:Number($('brushSize').value),points:S.points.slice(),filled:$('filled').checked,mirror_x:$('mirrorX').checked,mirror_y:$('mirrorY').checked,tolerance:0,role_id:Number($('roleInk').value),ink_alpha:Number($('roleAlpha').value)};
   if(mode==='text'){const body=dialog('绘制文字');body.append(form([text('text','文字内容','HELLO'),num('font_size','字号',12,6,256)],'绘制到当前图层',async values=>{await mutate('绘制文字…',layerPath('draw'),{...data,...values});$('dialog').close()}));return}
@@ -138,7 +158,104 @@ $('createClip').onclick=guard(()=>{const body=dialog('保存动画片段');body.
 $('addLayer').onclick=guard(()=>{const body=dialog('添加图层');body.append(form([text('name','图层名称','新绘制层'),text('color','初始填充颜色（00000000透明）','#00000000')],'添加到当前帧',async data=>{await mutate('添加图层…',framePath('layers'),data);S.layer=currentFrame().layers.at(-1).id;renderLayers();$('dialog').close()}))});
 $('copyLayer').onclick=guard(()=>mutate('复制图层…',layerPath('duplicate')));$('removeLayer').onclick=guard(()=>mutate('移除图层…',layerPath(),{},'DELETE'));$('mergeLayer').onclick=guard(()=>mutate('合并到下方图层…',layerPath('merge')));$('bakeLayer').onclick=guard(()=>mutate('烘焙图层变换…',layerPath('bake')));$('clearLayer').onclick=guard(()=>mutate('清空当前图层…',layerPath('clear')));
 for(const [id,delta]of [['layerUp',1],['layerDown',-1]])$(id).onclick=guard(()=>{const list=currentFrame().layers.map(l=>l.id),index=list.indexOf(currentLayer().id),next=index+delta;if(next<0||next>=list.length)return;[list[index],list[next]]=[list[next],list[index]];return mutate('调整图层顺序…',framePath('layers/reorder'),{layer_ids:list})});
-$('selectionMove').onclick=guard(()=>{project();const body=dialog('矩形选区复制与移动');body.append(form([num('x','选区左上X',0,0),num('y','选区左上Y',0,0),num('width','选区宽度',Math.min(24,project().width),1),num('height','选区高度',Math.min(24,project().height),1),num('dx','偏移X',4,-2048,2048),num('dy','偏移Y',0,-2048,2048),check('copy','复制而非剪切')],'应用选区',async data=>{const {x,y,width,height,...rest}=data;await mutate('移动选区…',layerPath('selection'),{...rest,selection:{type:'rectangle',x,y,width,height}});$('dialog').close()}))});
+$('selectionMove').onclick=guard(openFloatingSelection);
+function floatPath(suffix=''){const f=S.float;if(!f)throw Error('当前没有浮动选区');return `/api/projects/${project().id}/frames/${f.frame_id}/layers/${f.layer_id}/floating/${f.id}`+(suffix?'/'+suffix:'')}
+function floatRefreshBar(){
+  const f=S.float;if(!f)return;$('floatingBar').hidden=false;$('floatX').value=f.transform.x;$('floatY').value=f.transform.y;$('floatRotation').value=f.transform.rotation;$('floatScale').value=f.transform.scale_x;$('floatCopy').checked=Boolean(f.copy);$('floatFinishLasso').hidden=!S.floatDraw||S.floatDraw.shape!=='lasso';
+  $('floatInfo').textContent=(f.bounds?`选区 ${f.bounds[2]-f.bounds[0]}×${f.bounds[3]-f.bounds[1]} · ${f.masked_pixels} 像素 · 覆盖 ${f.effective_coverage}`:'未建立选区')+(f.captured_empty?' · 提示：该区域在原图层上完全透明，试排不会产生像素':'')+' · 拖动移动；Shift+拖动旋转；Alt+拖动缩放';
+}
+async function floatPreview(){
+  const f=S.float;if(!f)return;const image=new Image();const token=++S.floatToken;
+  image.onload=()=>{if(token!==S.floatToken||!S.float)return;S.floatImage=image;$('canvas').width=project().width;$('canvas').height=project().height;drawCanvas()};
+  image.onerror=()=>{if(token===S.floatToken)status('浮动预览加载失败，请刷新或取消重试',true)};
+  image.src=floatPath('preview')+`?frame=true&rev=${project().revision}&t=${token}`;
+}
+async function floatPatch(values){
+  const f=S.float;if(!f||!f.id)return;
+  try{const result=await post(floatPath(),{...values,revision:project().revision},'PATCH');S.float=result;floatRefreshBar();await floatPreview()}
+  catch(error){status(error.message,true);floatRefreshBar()}
+}
+async function floatMask(values){
+  const f=S.float;if(!f)return null;const result=await post(floatPath('mask'),{...values,revision:project().revision});S.float=result;floatRefreshBar();await floatPreview();return result;
+}
+function clearFloating(reload=true){
+  const had=Boolean(S.float&&S.float.id);S.float=null;S.floatImage=null;S.floatDraw=null;S.floatToken=(S.floatToken||0)+1;$('floatingBar').hidden=true;$('floatFinishLasso').hidden=true;S.points=[];if(reload&&had&&S.project)loadCanvas();else drawCanvas();
+}
+async function openFloatingSelection(){
+  project();
+  if(!S.float)await restoreFloatingSession(true);
+  if(S.float&&S.float.id){$('floatingBar').hidden=false;floatRefreshBar();await floatPreview();status('已恢复未确认的浮动试排；确认前不会写入撤销历史');return}
+  const layer=currentLayer(),frame=currentFrame();
+  if(layer.kind==='group')throw Error('请选择像素图层，组合需先展开');
+  if(layer.locked)throw Error('当前图层已锁定');
+  if(layer.cel_id)throw Error('共用原画会改变其他实例，请先脱离共用原画');
+  if(layer.role_encoding)throw Error('角色色图层可按普通层转换后再试排');
+  if(layer.transform.x||layer.transform.y||layer.transform.rotation||layer.transform.scale_x!==1||layer.transform.scale_y!==1||layer.transform.flip_x||layer.transform.flip_y||layer.affine)throw Error('请先烘焙图层变换，浮动选区按原始像素坐标工作');
+  if(S.float&&(S.float.layer_id!==layer.id||S.float.frame_id!==frame.id))clearFloating();
+  if(!S.float||!S.float.id)S.float={frame_id:frame.id,layer_id:layer.id,id:'',transform:{x:0,y:0,rotation:0,scale_x:1,scale_y:1,flip_x:false,flip_y:false}};
+  S.floatImage=null;S.floatDraw=null;S.points=[];
+  $('floatShape').value='rectangle';$('floatOperation').value='replace';$('floatFeather').value='0';
+  $('floatingBar').hidden=false;floatRefreshBar();drawCanvas();
+  status('浮动选区：按住拖动框出范围；套索逐点点击后按“完成套索”。移动、旋转、缩放只在确认时写入一步撤销。');
+}
+function floatShapeBody(draw){
+  const body={shape:draw.shape,operation:$('floatOperation').value,feather:Math.max(0,Math.min(64,Number($('floatFeather').value)||0))};
+  if(draw.shape==='lasso')body.points=draw.points;
+  else Object.assign(body,{x:draw.x,y:draw.y,width:draw.width,height:draw.height});
+  return body;
+}
+async function applyFloatShape(draw){
+  if(!S.float)throw Error('请先点“浮动选区”');
+  const body=floatShapeBody(draw);
+  if(!S.float.id)await work('建立浮动选区…',async()=>{S.float={...S.float,...await post(`/api/projects/${project().id}/frames/${S.float.frame_id}/layers/${S.float.layer_id}/floating`,{...body,revision:project().revision,transform:S.float.transform,copy:$('floatCopy').checked})}});
+  else await work('更新选区…',()=>floatMask(body));
+  S.floatDraw=null;floatRefreshBar();status('选区已更新；可继续添加/减去区域，拖动或旋转后确认');
+}
+function floatPointFromEvent(e){const rect=$('canvas').getBoundingClientRect();const p=[Math.floor((e.clientX-rect.left)/rect.width*project().width),Math.floor((e.clientY-rect.top)/rect.height*project().height)];return [Math.max(-4096,Math.min(project().width+4096,p[0])),Math.max(-4096,Math.min(project().height+4096,p[1]))]}
+let floatDrag=null;
+function floatHit(p){
+  const f=S.float;if(!f||!f.bounds)return false;const b=f.bounds,t=f.transform;
+  const diagonal=Math.abs(t.rotation)%180?1.4143:1;
+  const width=(b[2]-b[0])*Math.abs(t.scale_x)*diagonal,height=(b[3]-b[1])*Math.abs(t.scale_y)*diagonal;
+  const cx=(b[0]+b[2])/2+t.x,cy=(b[1]+b[3])/2+t.y;
+  return Math.abs(p[0]+.5-cx)<=width/2+.5&&Math.abs(p[1]+.5-cy)<=height/2+.5;
+}
+function floatPointerDown(e){
+  if(!S.float||S.busy||S.play)return false;
+  const canvas=$('canvas'),p=floatPointFromEvent(e);
+  if(S.floatDraw){if(S.floatDraw.shape==='lasso'){S.floatDraw.points.push(p);drawCanvas();return true}floatDrag={mode:'shape',start:p,shape:S.floatDraw};S.floatDraw.preview={x:p[0],y:p[1],width:0,height:0};drawCanvas();return true}
+  if(!S.float.id)return false;
+  if(!floatHit(p)){status('浮动片段在此处之外；点击片段拖动，Shift+拖动旋转，Alt+拖动缩放，或确认/取消');return true}
+  const mode=e.shiftKey?'rotate':(e.altKey?'scale':'move');
+  floatDrag={mode,start:p,origin:{...S.float.transform}};
+  canvas.setPointerCapture(e.pointerId);return true;
+}
+function floatPointerMove(e){
+  if(!floatDrag)return false;const p=floatPointFromEvent(e);const drag=floatDrag;
+  if(drag.mode==='shape'){const sx=drag.start;drag.shape.preview={x:Math.min(sx[0],p[0]),y:Math.min(sx[1],p[1]),width:Math.abs(p[0]-sx[0])+1,height:Math.abs(p[1]-sx[1])+1};drawCanvas();return true}
+  if(drag.mode==='move'){$('floatX').value=drag.origin.x+(p[0]-drag.start[0]);$('floatY').value=drag.origin.y+(p[1]-drag.start[1]);queueFloatPatch({'x':Number($('floatX').value),'y':Number($('floatY').value)});return true}
+  if(drag.mode==='rotate'){$('floatRotation').value=(drag.origin.rotation+(p[0]-drag.start[0])*2).toFixed(1);queueFloatPatch({rotation:Number($('floatRotation').value)});return true}
+  const factor=Math.max(.05,Math.min(8,drag.origin.scale_x*(1+(p[0]-drag.start[0])/Math.max(8,project().width/4))));$('floatScale').value=factor.toFixed(2);queueFloatPatch({scale_x:factor,scale_y:factor});return true;
+}
+let floatQueue=Promise.resolve();function queueFloatPatch(values){floatQueue=floatQueue.then(()=>floatPatch(values)).catch(error=>status(error.message,true))}
+function floatPointerUp(e){
+  if(!floatDrag)return false;const drag=floatDrag;floatDrag=null;
+  if(drag.mode==='shape'){const preview=drag.shape.preview;S.floatDraw.preview=null;if(!preview||preview.width<1||preview.height<1){drawCanvas();return true}applyFloatShape({shape:drag.shape.shape,points:drag.shape.points,...preview}).catch(error=>status(error.message,true));return true}
+  return true;
+}
+$('floatShape').onchange=()=>{if(S.floatDraw)S.floatDraw.shape=$('floatShape').value;if(S.floatDraw&&S.floatDraw.shape==='lasso')S.floatDraw.points??=[];$('floatFinishLasso').hidden=!S.floatDraw||S.floatDraw.shape!=='lasso'};
+$('floatDraw').onclick=guard(async()=>{if(!S.float)return openFloatingSelection();S.floatDraw={shape:$('floatShape').value,points:[],preview:null};$('floatFinishLasso').hidden=S.floatDraw.shape!=='lasso';status('在画布上按住拖动框选；套索逐点点击后按“完成套索”');drawCanvas()});
+$('floatFinishLasso').onclick=guard(async()=>{if(!S.floatDraw||S.floatDraw.shape!=='lasso'||!S.floatDraw.points||S.floatDraw.points.length<3)throw Error('套索至少需要三个顶点');await applyFloatShape({shape:'lasso',points:S.floatDraw.points.slice()})});
+$('floatConfirm').onclick=guard(async()=>{const f=S.float;if(!f||!f.id)throw Error('请先在画布上建立选区');if(S.frame!==f.frame_id||S.layer!==f.layer_id){S.frame=f.frame_id;S.layer=f.layer_id;renderFrames();renderLayers();status('切回浮动选区所在图层后确认')}let result;await work('确认浮动选区…',async()=>{result=await post(floatPath('confirm'),{revision:project().revision})});clearFloating(false);await acceptProject(result);status('浮动选区已确认；一次确认只增加一步撤销')});
+$('floatCancel').onclick=guard(async()=>{const f=S.float;if(f&&f.id)await work('取消浮动选区…',async()=>{await post(floatPath(),{revision:project().revision},'DELETE')});clearFloating();status('已取消浮动选区，像素保持原样')});
+$('floatCopy').onchange=guard(()=>floatPatch({copy:$('floatCopy').checked}));
+$('floatReset').onclick=guard(()=>floatPatch({x:0,y:0,rotation:0,scale_x:1,scale_y:1,flip_x:false,flip_y:false}));
+document.addEventListener('keydown',guard(async event=>{
+  if(!S.float||!S.float.id||S.busy)return;if(/^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName))return;
+  const steps={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[event.key];
+  if(steps){event.preventDefault();const f=S.float;queueFloatPatch({x:f.transform.x+steps[0]*(event.shiftKey?8:1),y:f.transform.y+steps[1]*(event.shiftKey?8:1)})}
+}));
+for(const id of ['floatX','floatY','floatRotation','floatScale'])$(id).onchange=guard(()=>{const f=S.float;if(!f)return;const data={x:Number($('floatX').value),y:Number($('floatY').value),rotation:Number($('floatRotation').value),scale_x:Number($('floatScale').value),scale_y:Number($('floatScale').value)};return floatPatch(data)});
 $('propagate').onclick=guard(()=>{const body=dialog('跨帧复制当前图层');body.append(element('p','目标为勾选帧；未勾选时使用全部帧。源帧跳过。','hint'));body.append(form([select('mode','复制方式','append',[['append','追加图层'],['replace_name','替换唯一同名图层']])],'复制到目标帧',async data=>{await mutate('复制图层到其他帧…',layerPath('propagate'),{...data,frame_ids:ids()});$('dialog').close()}))});
 $('stamp').onclick=guard(()=>{const body=dialog('使用动画帧作为图像印章');body.append(form([select('source_frame','来源帧',currentFrame().id,frameChoices()),num('x','印章左上X',0,-2048,2048),num('y','印章左上Y',0,-2048,2048),num('scale','印章倍率',.5,.05,4),num('rotation','旋转角度',0,-360,360),num('opacity','不透明度',1,0,1)],'绘制图像印章',async data=>{await mutate('应用帧印章…',layerPath('stamp'),data);$('dialog').close()}))});
 $('collisionPreview').onclick=guard(()=>{loadCanvas(framePath('collision-preview')+'?rev='+project().revision);status('红框为碰撞框，黄色十字为枢轴；绘制或切帧后返回普通预览')});

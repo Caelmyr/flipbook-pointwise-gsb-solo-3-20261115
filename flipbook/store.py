@@ -203,7 +203,7 @@ class Store:
             original = self.get(project_id)
             copied_id = new_id()
             target = self.projects / copied_id
-            shutil.copytree(self.directory(project_id), target, ignore=shutil.ignore_patterns('exports', 'history'))
+            shutil.copytree(self.directory(project_id), target, ignore=shutil.ignore_patterns('exports', 'history', 'floating'))
             (target / 'exports').mkdir()
             (target / 'history').mkdir()
             original['id'] = copied_id

@@ -17,6 +17,7 @@ from .contracts import check_assets, export_preflight
 from .reports import project_report
 from .presets import create_demo
 from .palettes import ramp, color_inventory
+from . import floating
 
 
 def body():
@@ -258,6 +259,52 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
     def selection(key, frame_id, layer_id):
         data = body()
         return jsonify(layers.selection(key, v.revision(data), frame_id, layer_id, data))
+
+    @api.post('/projects/<key>/frames/<frame_id>/layers/<layer_id>/floating')
+    def floating_start(key, frame_id, layer_id):
+        data = body()
+        return jsonify(floating.start(store, key, frame_id, layer_id, data.get('revision'), data)), 201
+
+    @api.get('/projects/<key>/floating')
+    def floating_list(key):
+        return jsonify(floating.list_sessions(store, key, request.args.get('frame_id'), request.args.get('layer_id')))
+
+    @api.get('/projects/<key>/frames/<frame_id>/layers/<layer_id>/floating/<session_id>')
+    def floating_session(key, frame_id, layer_id, session_id):
+        with store.lock:
+            project = store.get(key)
+            session = floating.read_session(store, key, session_id)
+            floating.require_basis(project, frame_id, layer_id, session)
+            return jsonify(floating.summary(session))
+
+    @api.patch('/projects/<key>/frames/<frame_id>/layers/<layer_id>/floating/<session_id>')
+    def floating_transform(key, frame_id, layer_id, session_id):
+        data = body()
+        return jsonify(floating.update_transform(store, key, frame_id, layer_id, session_id, data))
+
+    @api.post('/projects/<key>/frames/<frame_id>/layers/<layer_id>/floating/<session_id>/mask')
+    def floating_mask(key, frame_id, layer_id, session_id):
+        data = body()
+        return jsonify(floating.add_mask(store, key, frame_id, layer_id, session_id, data))
+
+    @api.get('/projects/<key>/frames/<frame_id>/layers/<layer_id>/floating/<session_id>/preview')
+    def floating_preview(key, frame_id, layer_id, session_id):
+        whole_frame = request.args.get('frame') == 'true'
+        return image_response(floating.preview(store, key, frame_id, layer_id, session_id, whole_frame))
+
+    @api.get('/projects/<key>/frames/<frame_id>/layers/<layer_id>/floating/<session_id>/mask.png')
+    def floating_mask_image(key, frame_id, layer_id, session_id):
+        return image_response(floating.preview_mask(store, key, frame_id, layer_id, session_id))
+
+    @api.post('/projects/<key>/frames/<frame_id>/layers/<layer_id>/floating/<session_id>/confirm')
+    def floating_confirm(key, frame_id, layer_id, session_id):
+        data = body()
+        return jsonify(floating.confirm(store, key, frame_id, layer_id, session_id, v.revision(data)))
+
+    @api.delete('/projects/<key>/frames/<frame_id>/layers/<layer_id>/floating/<session_id>')
+    def floating_cancel(key, frame_id, layer_id, session_id):
+        body()
+        return jsonify(floating.cancel(store, key, frame_id, layer_id, session_id))
 
     @api.post('/projects/<key>/frames/<frame_id>/layers/<layer_id>/propagate')
     def propagate(key, frame_id, layer_id):

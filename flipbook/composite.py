@@ -60,18 +60,20 @@ def blend_pixels(backdrop, source, mode='normal', opacity=1):
     return Image.fromarray(np.clip(np.rint(result * 255), 0, 255).astype(np.uint8))
 
 
-def render_frame(store, project, frame_id, background=False):
+def render_frame(store, project, frame_id, background=False, overrides=None):
     frame = find_frame(project, frame_id)
     size = (project['width'], project['height'])
     output = Image.new('RGBA', size, v.rgba(project['background']) if background else (0, 0, 0, 0))
     if any(layer.get('kind') == 'group' or layer.get('affine') for layer in frame['layers']):
         from .layer_tree import render_tree
-        return render_tree(frame['layers'], size, lambda asset: store.image(project['id'], asset), output)
+        return render_tree(frame['layers'], size, lambda asset: store.image(project['id'], asset), output, overrides=overrides)
     for layer in frame['layers']:
         if not layer['visible'] or layer['opacity'] <= 0:
             continue
         from .role_tools import display_image
-        if layer.get('scene_source'):
+        if overrides and layer['id'] in overrides:
+            image = overrides[layer['id']]
+        elif layer.get('scene_source'):
             from .composition import render_external
             image = render_external(store, layer['scene_source'])
         else:

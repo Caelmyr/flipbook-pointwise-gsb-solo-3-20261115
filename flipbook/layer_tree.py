@@ -79,14 +79,16 @@ def validate_tree(nodes, budget=256, max_depth=8):
     walk(nodes, 0)
 
 
-def render_tree(nodes, size, get_asset, backdrop=None):
+def render_tree(nodes, size, get_asset, backdrop=None, overrides=None):
     validate_tree(nodes)
     base = backdrop.copy() if backdrop is not None else Image.new('RGBA', size)
     for node in nodes:
         if not node.get('visible', True):
             continue
         if node.get('kind') == 'group':
-            image = render_tree(node['children'], size, get_asset)
+            image = render_tree(node['children'], size, get_asset, overrides=overrides)
+        elif overrides and node['id'] in overrides:
+            image = overrides[node['id']]
         else:
             image = get_asset(node['asset'])
         retained = np.asarray(node.get('affine', np.eye(3)), dtype=float)

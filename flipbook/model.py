@@ -124,6 +124,8 @@ def validate_structure(project):
     if 'ink_roles' in project:
         from .role_tools import validate_entries
         validate_entries(project['ink_roles'])
+    if 'floating' in project:
+        raise v.Invalid('浮动选区试排属于临时会话，不写入项目；请确认或取消后再保存')
     if project.get('schema') != SCHEMA:
         raise v.Invalid('不支持的项目版本')
     v.key(project.get('id'))

@@ -55,6 +55,12 @@ class Workflows(unittest.TestCase):
         payload.update(data or {})
         return self.call(method, self.base(project) + '/' + path, payload)
 
+    def start_floating(self, project, body, layer_id=None, frame=None):
+        frame = frame or project['frames'][0]
+        layer_id = layer_id or frame['layers'][0]['id']
+        return self.call('POST', self.base(project) + '/frames/' + frame['id'] + '/layers/' + layer_id + '/floating',
+                         {'revision': project['revision'], **body}, 201)
+
     def layer_path(self, project, suffix=''):
         frame = project['frames'][0]
         return 'frames/' + frame['id'] + '/layers/' + frame['layers'][0]['id'] + ('/' + suffix if suffix else '')
@@ -67,6 +73,167 @@ class Workflows(unittest.TestCase):
 
     def image(self, project, frame=0):
         return render_frame(self.store, project, project['frames'][frame]['id'])
+
+    def floating_path(self, project, suffix=''):
+        return self.layer_path(project, 'floating') + ('/' + suffix if suffix else '')
+
+    def floating_image(self, project, session_id, suffix='preview'):
+        data = self.call('GET', self.base(project) + '/' + self.floating_path(project, session_id + '/' + suffix))
+        with Image.open(io.BytesIO(data)) as decoded:
+            return np.asarray(decoded.convert('RGBA')).copy()
+
+    def test_floating_tryout_never_touches_project_revision(self):
+        project = self.paint(self.new(width=24, height=24), '#ff000080', [[2, 2], [9, 9]])
+        session = self.start_floating(project, {'shape': 'rectangle', 'x': 2, 'y': 2, 'width': 8, 'height': 8})
+        self.assertEqual(self.store.get(project['id'])['revision'], project['revision'])
+        start = self.floating_image(project, session['id'])
+        self.assertEqual(start[4, 4].tolist(), [255, 0, 0, 128])
+        path = self.base(project) + '/' + self.floating_path(project, session['id'])
+        for transform in [{'dx': 12}, {'rotation': 37}, {'scale_x': 1.6, 'scale_y': .6}]:
+            session = self.call('PATCH', path, transform)
+        session = self.call('PATCH', path, {'x': 0, 'y': 0, 'rotation': 0, 'scale_x': 1, 'scale_y': 1})
+        np.testing.assert_array_equal(self.floating_image(project, session['id']), np.asarray(self.image(project)))
+        self.assertEqual(self.store.get(project['id'])['revision'], project['revision'])
+        self.assertEqual(len(list(self.store.directory(project['id']).glob('floating/*.json'))), 1)
+
+    def test_floating_move_off_canvas_and_back(self):
+        project = self.paint(self.new(width=24, height=24), '#ff0000a0', [[3, 3], [10, 10]])
+        session = self.start_floating(project, {'shape': 'rectangle', 'x': 3, 'y': 3, 'width': 8, 'height': 8})
+        path = self.base(project) + '/' + self.floating_path(project, session['id'])
+        self.call('PATCH', path, {'dx': 400, 'dy': -300})
+        off = self.floating_image(project, session['id'])
+        self.assertEqual(int(off[:, :, 3].max()), 0)
+        self.call('PATCH', path, {'dx': 0, 'dy': 0})
+        np.testing.assert_array_equal(self.floating_image(project, session['id']), np.asarray(self.image(project)))
+
+    def test_lasso_add_subtract_and_soft_edge(self):
+        project = self.paint(self.new(width=24, height=24), '#3388ff80', [[1, 1], [14, 14]])
+        lasso = [[1, 1], [14, 1], [14, 14], [1, 14]]
+        session = self.start_floating(project, {'shape': 'lasso', 'points': lasso})
+        path = self.base(project) + '/' + self.floating_path(project, session['id'])
+        session = self.call('POST', path + '/mask', {'operation': 'subtract', 'feather': 2.5, 'x': 1, 'y': 1, 'width': 6, 'height': 6})
+        self.assertLess(session['effective_coverage'], session['masked_pixels'])
+        self.assertEqual(len(session['selection']), 2)
+        self.assertEqual(session['selection'][1]['feather'], 2.5)
+        session = self.call('POST', path + '/mask', {'operation': 'add', 'shape': 'ellipse', 'x': 12, 'y': 1, 'width': 8, 'height': 8})
+        soft = self.floating_image(project, session['id'])
+        feather_values = np.asarray(self._masked_alpha(project, session['id']))
+        self.assertTrue(np.any((feather_values > 0) & (feather_values < 255)))
+        self.call('PATCH', path, {'dx': 5})
+        moved = self.floating_image(project, session['id'])
+        self.assertGreater(int(moved[4, 9, 3]), 0)
+
+    def _masked_alpha(self, project, session_id):
+        data = self.call('GET', self.base(project) + '/' + self.floating_path(project, session_id + '/mask.png'))
+        with Image.open(io.BytesIO(data)) as decoded:
+            return np.asarray(decoded.convert('L')).copy()
+
+    def test_floating_overlap_does_not_darken_soft_edge(self):
+        project = self.paint(self.new(width=24, height=24), '#40a06080', [[2, 2], [10, 10]])
+        session = self.start_floating(project, {'shape': 'rectangle', 'x': 2, 'y': 2, 'width': 9, 'height': 9, 'feather': 1.5})
+        path = self.base(project) + '/' + self.floating_path(project, session['id'])
+        original_peak = int(self.floating_image(project, session['id'])[:, :, 3].max())
+        for dx in (1, 2, 3, 4):
+            self.call('PATCH', path, {'dx': dx})
+            overlap = self.floating_image(project, session['id'])
+            self.assertLessEqual(int(overlap[:, :, 3].max()), original_peak)
+        self.call('PATCH', path, {'dx': 0, 'dy': 0})
+        np.testing.assert_array_equal(self.floating_image(project, session['id']), np.asarray(self.image(project)))
+
+    def test_floating_copy_keeps_source_pixels(self):
+        project = self.paint(self.new(width=24, height=24), '#ff8800a0', [[3, 3], [8, 8]])
+        session = self.start_floating(project, {'shape': 'rectangle', 'x': 3, 'y': 3, 'width': 6, 'height': 6, 'copy': True})
+        path = self.base(project) + '/' + self.floating_path(project, session['id'])
+        self.assertTrue(session['copy'])
+        self.call('PATCH', path, {'dx': 10})
+        copied = self.floating_image(project, session['id'])
+        self.assertEqual(copied[4, 4].tolist(), [255, 136, 0, 160])
+        self.assertEqual(copied[4, 14].tolist(), [255, 136, 0, 160])
+
+    def test_floating_preview_matches_confirm_and_single_undo(self):
+        project = self.paint(self.new(width=24, height=24), '#ff8800a0', [[3, 3], [10, 10]])
+        session = self.start_floating(project, {'shape': 'rectangle', 'x': 3, 'y': 3, 'width': 8, 'height': 8})
+        path = self.base(project) + '/' + self.floating_path(project, session['id'])
+        self.call('PATCH', path, {'x': 9, 'y': -2, 'rotation': 40, 'scale_x': 1.4, 'scale_y': 1.4})
+        preview = self.floating_image(project, session['id'])
+        undo_before = list(self.store.get(project['id'])['undo'])
+        project = self.call('POST', path + '/confirm', {'revision': project['revision']})
+        self.assertEqual(len(self.store.get(project['id'])['undo']), len(undo_before) + 1)
+        self.assertEqual(self.store.history(project['id'])[0]['operation'], '确认浮动选区')
+        np.testing.assert_array_equal(np.asarray(self.image(project)), preview)
+        self.assertEqual(list(self.store.directory(project['id']).glob('floating/*.json')), [])
+        project = self.mutate(project, 'undo')
+        self.assertEqual(self.image(project).getpixel((4, 4)), (255, 136, 0, 160))
+        self.assertEqual(self.image(project).getpixel((14, 4))[3], 0)
+
+    def test_floating_cancel_restores_and_stale_base_is_rejected(self):
+        project = self.paint(self.new(width=24, height=24), '#0000ffa0', [[2, 2], [9, 9]])
+        session = self.start_floating(project, {'shape': 'rectangle', 'x': 2, 'y': 2, 'width': 7, 'height': 7})
+        path = self.base(project) + '/' + self.floating_path(project, session['id'])
+        self.call('PATCH', path, {'dx': 6})
+        cancelled = self.call('DELETE', path, {'revision': project['revision']})
+        self.assertEqual(cancelled['revision'], project['revision'])
+        self.assertEqual(self.image(cancelled).getpixel((4, 4)), (0, 0, 255, 160))
+        response = self.client.get(path + '/preview')
+        self.assertEqual(response.status_code, 400)
+        response.close()
+        session = self.start_floating(project, {'shape': 'rectangle', 'x': 2, 'y': 2, 'width': 7, 'height': 7})
+        stale = self.paint(project, '#ffffff40', [[18, 18], [20, 20]])
+        response = self.client.get(self.base(stale) + '/' + self.floating_path(stale, session['id'] + '/preview'))
+        self.assertEqual(response.status_code, 409)
+        response.close()
+
+    def test_floating_preview_composites_lower_layer(self):
+        project = self.paint(self.new(width=16, height=16), '#0000ffff', [[0, 0], [15, 15]])
+        frame_id = project['frames'][0]['id']
+        project = self.mutate(project, 'frames/' + frame_id + '/layers', {'name': '浮动层', 'color': '#00000000'})
+        layer_id = project['frames'][0]['layers'][-1]['id']
+        project = self.mutate(project, 'frames/' + frame_id + '/layers/' + layer_id + '/draw', {'tool': 'rectangle', 'points': [[4, 4], [7, 7]], 'color': '#8800ffa0', 'filled': True})
+        session = self.start_floating(project, {'shape': 'rectangle', 'x': 4, 'y': 4, 'width': 4, 'height': 4}, layer_id, project['frames'][0])
+        path = self.base(project) + '/frames/' + frame_id + '/layers/' + layer_id + '/floating/' + session['id']
+        self.call('PATCH', path, {'dx': 5})
+        data = self.call('GET', path + '/preview?frame=true')
+        with Image.open(io.BytesIO(data)) as decoded:
+            frame = np.asarray(decoded.convert('RGBA'))
+        self.assertEqual(frame[4, 4].tolist(), [0, 0, 255, 255])
+        self.assertEqual(frame[5, 10].tolist(), [85, 0, 255, 255])
+        self.assertEqual(frame[5, 4].tolist(), [0, 0, 255, 255])
+
+    def test_floating_session_survives_restart_and_guards_basis(self):
+        project = self.paint(self.new(width=24, height=24), '#aa44ff80', [[2, 2], [10, 10]])
+        frame_id = project['frames'][0]['id']
+        layer_id = project['frames'][0]['layers'][0]['id']
+        session = self.start_floating(project, {'shape': 'rectangle', 'x': 2, 'y': 2, 'width': 9, 'height': 9})
+        path = self.base(project) + '/frames/' + frame_id + '/layers/' + layer_id + '/floating/' + session['id']
+        self.call('PATCH', path, {'x': 5, 'rotation': 22})
+        another = create_app(self.temp.name)
+        try:
+            client = another.test_client()
+            sessions = client.get(self.base(project) + '/floating').json
+            self.assertEqual(len(sessions), 1)
+            self.assertEqual(sessions[0]['transform']['x'], 5)
+            moved = client.get(path + '/preview').data
+            with Image.open(io.BytesIO(moved)) as decoded:
+                self.assertEqual(decoded.size, (24, 24))
+            response = client.post(path + '/confirm', json={'revision': project['revision'] - 1})
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(client.get(self.base(project) + '/floating').json[0]['id'], session['id'])
+            response = client.post(path + '/confirm', json={'revision': project['revision']})
+            self.assertEqual(response.status_code, 200, response.json)
+            self.assertEqual(client.get(self.base(project) + '/floating').json, [])
+        finally:
+            another.extensions['jobs'].executor.shutdown(wait=True)
+        project = self.store.get(project['id'])
+        pending = self.start_floating(project, {'shape': 'rectangle', 'x': 2, 'y': 2, 'width': 6, 'height': 6})
+        other_layer = self.base(project) + '/frames/' + frame_id + '/layers/' + 'f' * 32 + '/floating/' + pending['id']
+        response = self.client.get(other_layer + '/preview')
+        self.assertEqual(response.status_code, 400)
+        response.close()
+        fresh = self.store.get(project['id'])
+        self.mutate(fresh, self.layer_path(fresh), {'locked': True}, 'PATCH')
+        response = self.client.get(self.base(project) + '/' + self.floating_path(project, pending['id'] + '/preview'))
+        self.assertEqual(response.status_code, 400)
+        response.close()
 
     def test_all_original_demos(self):
         for kind, count in [('robot', 12), ('flame', 12), ('orb', 12), ('tiles', 3)]:

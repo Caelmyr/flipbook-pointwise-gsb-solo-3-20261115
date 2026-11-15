@@ -7,9 +7,18 @@ test_atlas_pixel_roundtrip_and_no_overlaps (test_workflows.Workflows.test_atlas_
 test_auto_sprite_slice (test_workflows.Workflows.test_auto_sprite_slice) ... ok
 test_crossfade_preserves_unassociated_color (test_workflows.Workflows.test_crossfade_preserves_unassociated_color) ... ok
 test_export_jobs_all_formats (test_workflows.Workflows.test_export_jobs_all_formats) ... ok
+test_floating_cancel_restores_and_stale_base_is_rejected (test_workflows.Workflows.test_floating_cancel_restores_and_stale_base_is_rejected) ... ok
+test_floating_copy_keeps_source_pixels (test_workflows.Workflows.test_floating_copy_keeps_source_pixels) ... ok
+test_floating_move_off_canvas_and_back (test_workflows.Workflows.test_floating_move_off_canvas_and_back) ... ok
+test_floating_overlap_does_not_darken_soft_edge (test_workflows.Workflows.test_floating_overlap_does_not_darken_soft_edge) ... ok
+test_floating_preview_composites_lower_layer (test_workflows.Workflows.test_floating_preview_composites_lower_layer) ... ok
+test_floating_preview_matches_confirm_and_single_undo (test_workflows.Workflows.test_floating_preview_matches_confirm_and_single_undo) ... ok
+test_floating_session_survives_restart_and_guards_basis (test_workflows.Workflows.test_floating_session_survives_restart_and_guards_basis) ... ok
+test_floating_tryout_never_touches_project_revision (test_workflows.Workflows.test_floating_tryout_never_touches_project_revision) ... ok
 test_flood_fill_stays_inside_shape (test_workflows.Workflows.test_flood_fill_stays_inside_shape) ... ok
 test_geometry_scales_boxes_and_pivots (test_workflows.Workflows.test_geometry_scales_boxes_and_pivots) ... ok
 test_gif_opaque_black_not_reserved_transparency (test_workflows.Workflows.test_gif_opaque_black_not_reserved_transparency) ... ok
+test_lasso_add_subtract_and_soft_edge (test_workflows.Workflows.test_lasso_add_subtract_and_soft_edge) ... ok
 test_layer_duplicate_merge_matches_render (test_workflows.Workflows.test_layer_duplicate_merge_matches_render) ... ok
 test_layer_opacity_and_blending (test_workflows.Workflows.test_layer_opacity_and_blending) ... ok
 test_locked_layer_rejects_and_revision_unchanged (test_workflows.Workflows.test_locked_layer_rejects_and_revision_unchanged) ... ok
@@ -31,6 +40,6 @@ test_time_resample_total_preserved (test_workflows.Workflows.test_time_resample_
 test_transform_tween_end_state (test_workflows.Workflows.test_transform_tween_end_state) ... ok
 
 ----------------------------------------------------------------------
-Ran 31 tests in 1.112s
+Ran 40 tests in 1.278s
 
 OK

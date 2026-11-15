@@ -1,7 +1,7 @@
 from collections import deque
 import math
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from . import validate as v
 
 
@@ -142,32 +142,27 @@ def draw(image, command):
 def selection_mask(size, body):
     mask = Image.new('L', size, 0)
     painter = ImageDraw.Draw(mask)
-    kind = body.get('type', 'rectangle')
-    if kind == 'rectangle':
+    kind = body.get('type', body.get('shape', 'rectangle'))
+    if kind in ('rectangle', 'ellipse'):
         rectangle = v.rect(body, *size)
         x, y = rectangle['x'], rectangle['y']
-        painter.rectangle((x, y, x + rectangle['width'] - 1, y + rectangle['height'] - 1), fill=255)
-    elif kind == 'polygon':
+        area = (x, y, x + rectangle['width'] - 1, y + rectangle['height'] - 1)
+        (painter.ellipse if kind == 'ellipse' else painter.rectangle)(area, fill=255)
+    elif kind in ('polygon', 'lasso'):
         points = v.points(body.get('points'), *size, minimum=3)
         painter.polygon([tuple(p) for p in points], fill=255)
-    elif kind == 'ellipse':
-        rectangle = v.rect(body, *size)
-        x, y = rectangle['x'], rectangle['y']
-        painter.ellipse((x, y, x + rectangle['width'] - 1, y + rectangle['height'] - 1), fill=255)
     else:
         raise v.Invalid('选区类型不支持')
+    feather = v.real(body.get('feather', 0), '软边半径', 0, 64)
+    if feather > 0:
+        mask = mask.filter(ImageFilter.GaussianBlur(feather))
     return mask
 
 
 def move_selection(image, selection, dx, dy, copy=False):
+    from .floating import NEUTRAL, compose
     mask = selection_mask(image.size, selection)
-    selected = image.copy()
-    alpha = np.asarray(image.getchannel('A'), dtype=float) * np.asarray(mask, dtype=float) / 255
-    selected.putalpha(Image.fromarray(alpha.astype(np.uint8)))
-    base = image.copy() if copy else erase_pixels(image, mask)
-    shifted = Image.new('RGBA', image.size)
-    shifted.alpha_composite(selected, (dx, dy))
-    return Image.alpha_composite(base, shifted)
+    return compose(image, mask, dict(NEUTRAL, x=dx, y=dy), copy=copy)
 
 
 def stamp(image, source, x, y, scale=1, rotation=0, opacity=1):
