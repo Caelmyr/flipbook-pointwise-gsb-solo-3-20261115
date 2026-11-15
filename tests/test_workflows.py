@@ -293,6 +293,169 @@ class Workflows(unittest.TestCase):
         self.assertEqual(len(target['frames']), 22)
         self.assertEqual(len(self.store.get(project['id'])['frames']), 12)
 
+    def fixture_project(self, name='cleanup-shared-exposures'):
+        path = Path(__file__).resolve().parents[1] / 'examples' / (name + '.zip')
+        with open(path, 'rb') as stream:
+            response = self.client.post('/api/import-bundle', data={'file': (io.BytesIO(stream.read()), 'project.zip')})
+        self.assertEqual(response.status_code, 201, response.json)
+        result = response.json
+        response.close()
+        return result
+
+    def clip_total(self, project, clip_id):
+        return self.call('GET', self.base(project) + '/schedule?clip_id=' + clip_id)['total_duration']
+
+    def test_deduplicate_preserves_shared_clip_exposures(self):
+        project = self.fixture_project()
+        self.assertEqual(len(project['frames']), 5)
+        preview = self.call('GET', self.base(project) + '/deduplicate-preview')
+        self.assertEqual(preview['before'], {'frames': 5, 'total_duration': 540})
+        self.assertEqual(preview['after'], {'frames': 4, 'total_duration': 540})
+        self.assertEqual(len(preview['mergeable']), 1)
+        self.assertEqual(preview['mergeable'][0]['result_duration'], 200)
+        self.assertEqual(preview['mergeable'][0]['absorbed'][0]['duration'], 120)
+        self.assertTrue(all(clip['timing_preserved'] for clip in preview['clips']))
+        affected = {clip['name'] for clip in preview['clips'] if clip['affected']}
+        self.assertEqual(affected, {'仅首帧80ms', '第二帧加蓝220ms', '往返曝光420ms'})
+        result = self.mutate(project, 'deduplicate', {'adjacent_only': True})
+        project, cleanup = result['project'], result['cleanup']
+        self.assertEqual(len(project['frames']), 4)
+        self.assertEqual(sum(frame['duration'] for frame in project['frames']), 540)
+        totals = {clip['name']: self.clip_total(project, clip['id']) for clip in project['clips']}
+        self.assertEqual(totals, {'仅首帧80ms': 80, '第二帧加蓝220ms': 220, '往返曝光420ms': 420})
+        pingpong = next(clip for clip in project['clips'] if clip['name'] == '往返曝光420ms')
+        self.assertEqual(len(pingpong['frame_ids']), 2)
+        self.assertEqual([item['duration'] for item in pingpong['exposures']], [80, 120, 100])
+        self.assertTrue(all(clip['timing_preserved'] for clip in cleanup['clips']))
+        project = self.mutate(project, 'undo')
+        self.assertEqual(len(project['frames']), 5)
+        restored = next(clip for clip in project['clips'] if clip['name'] == '往返曝光420ms')
+        self.assertNotIn('exposures', restored)
+        self.assertEqual(self.clip_total(project, restored['id']), 420)
+
+    def test_deduplicate_global_merges_shared_frames(self):
+        project = self.fixture_project()
+        preview = self.call('GET', self.base(project) + '/deduplicate-preview?adjacent_only=false')
+        self.assertEqual(preview['after'], {'frames': 2, 'total_duration': 540})
+        self.assertEqual(len(preview['mergeable']), 2)
+        result = self.mutate(project, 'deduplicate', {'adjacent_only': False})
+        project = result['project']
+        self.assertEqual(len(project['frames']), 2)
+        self.assertEqual(sum(frame['duration'] for frame in project['frames']), 540)
+        totals = {clip['name']: self.clip_total(project, clip['id']) for clip in project['clips']}
+        self.assertEqual(totals, {'仅首帧80ms': 80, '第二帧加蓝220ms': 220, '往返曝光420ms': 420})
+
+    def test_deduplicate_keeps_frames_with_different_boxes(self):
+        project = self.paint(self.new())
+        first = project['frames'][0]['id']
+        project = self.mutate(project, 'frames', {'after': first, 'source': first, 'count': 1})
+        box = {'name': '攻击', 'x': 1, 'y': 1, 'width': 5, 'height': 5}
+        project = self.mutate(project, 'frames/' + project['frames'][1]['id'], {'boxes': [box]}, 'PATCH')
+        preview = self.call('GET', self.base(project) + '/deduplicate-preview')
+        self.assertEqual(preview['mergeable'], [])
+        self.assertEqual(len(preview['unmergeable']), 1)
+        self.assertIn('碰撞框', preview['unmergeable'][0]['reason'])
+        response = self.client.post(self.base(project) + '/deduplicate', json={'revision': project['revision']})
+        self.assertEqual(response.status_code, 400)
+        response.close()
+        project = self.mutate(project, 'frames/' + project['frames'][0]['id'], {'boxes': [box]}, 'PATCH')
+        preview = self.call('GET', self.base(project) + '/deduplicate-preview')
+        self.assertEqual(len(preview['mergeable']), 1)
+        result = self.mutate(project, 'deduplicate', {})
+        self.assertEqual(len(result['project']['frames']), 1)
+        self.assertEqual(result['project']['frames'][0]['duration'], 200)
+        self.assertEqual(result['project']['frames'][0]['boxes'], [dict(box, **{})])
+
+    def test_deduplicate_duration_cap_and_plain_project(self):
+        project = self.paint(self.new())
+        first = project['frames'][0]['id']
+        project = self.mutate(project, 'frames', {'after': first, 'source': first, 'count': 2})
+        durations = [6000, 4000, 100]
+        for frame, duration in zip(project['frames'], durations):
+            project = self.mutate(project, 'frames/' + frame['id'], {'duration': duration}, 'PATCH')
+        preview = self.call('GET', self.base(project) + '/deduplicate-preview')
+        self.assertEqual(len(preview['mergeable']), 1)
+        self.assertEqual(preview['mergeable'][0]['result_duration'], 10000)
+        self.assertEqual(len(preview['unmergeable']), 1)
+        self.assertIn('10000', preview['unmergeable'][0]['reason'])
+        result = self.mutate(project, 'deduplicate', {})
+        project = result['project']
+        self.assertEqual([frame['duration'] for frame in project['frames']], [10000, 100])
+        project = self.mutate(project, 'undo')
+        self.assertEqual([frame['duration'] for frame in project['frames']], durations)
+
+    def test_deduplicate_tilemap_slots_and_flips_unchanged(self):
+        project = self.paint(self.new())
+        first = project['frames'][0]['id']
+        project = self.mutate(project, 'frames', {'after': first, 'source': first, 'count': 1})
+        first, second = project['frames'][0]['id'], project['frames'][1]['id']
+        project = self.mutate(project, 'maps', {'columns': 2, 'rows': 2, 'tile_width': 16, 'tile_height': 16, 'tiles': [first, second]})
+        map_id = project['tilemaps'][0]['id']
+        project = self.mutate(project, f'maps/{map_id}/paint', {'tile': 2, 'cells': [[0, 0]], 'flip_x': True})
+        self.assertEqual(project['tilemaps'][0]['layers'][0]['data'][0], 0x80000002)
+        before_map = self.call('GET', self.base(project) + f'/maps/{map_id}/image')
+        result = self.mutate(project, 'deduplicate', {})
+        project, cleanup = result['project'], result['cleanup']
+        self.assertEqual(project['tilemaps'][0]['tiles'], [first, first])
+        self.assertEqual(project['tilemaps'][0]['layers'][0]['data'][0], 0x80000002)
+        self.assertEqual(cleanup['tilemaps'][0]['remapped_slots'], 1)
+        after_map = self.call('GET', self.base(project) + f'/maps/{map_id}/image')
+        self.assertEqual(before_map, after_map)
+
+    def test_deduplicate_preview_is_read_only(self):
+        project = self.paint(self.new())
+        first = project['frames'][0]['id']
+        project = self.mutate(project, 'frames', {'after': first, 'source': first, 'count': 1})
+        revision = project['revision']
+        preview = self.call('GET', self.base(project) + '/deduplicate-preview')
+        self.assertEqual(len(preview['mergeable']), 1)
+        actual = self.store.get(project['id'])
+        self.assertEqual(actual['revision'], revision)
+        self.assertEqual(len(actual['frames']), 2)
+        empty = self.demo()
+        preview = self.call('GET', self.base(empty) + '/deduplicate-preview')
+        self.assertEqual(preview['mergeable'], [])
+        response = self.client.post(self.base(empty) + '/deduplicate', json={'revision': empty['revision']})
+        self.assertEqual(response.status_code, 400)
+        response.close()
+        self.assertEqual(self.store.get(empty['id'])['revision'], empty['revision'])
+
+    def test_deduplicate_remaps_pinned_atlas_slots(self):
+        project = self.paint(self.new())
+        first = project['frames'][0]['id']
+        project = self.mutate(project, 'frames', {'after': first, 'source': first, 'count': 1})
+        second = project['frames'][1]['id']
+        project = self.call('POST', self.base(project) + '/atlas-workspaces', {'name': '图集', 'width': 64, 'height': 64, 'revision': project['revision']}, 201)
+        workspace_id = project['atlas_workspaces'][0]['id']
+        project = self.mutate(project, f'atlas-workspaces/{workspace_id}/build', {'locked': [second]})
+        self.assertEqual(project['atlas_workspaces'][0]['locked'], [second])
+        result = self.mutate(project, 'deduplicate', {})
+        self.assertEqual(result['project']['atlas_workspaces'][0]['locked'], [first])
+
+    def test_deduplicate_dynamic_tile_timing_unchanged(self):
+        project = self.paint(self.new())
+        first = project['frames'][0]['id']
+        project = self.mutate(project, 'frames', {'after': first, 'source': first, 'count': 1})
+        project = self.mutate(project, 'frames', {'after': project['frames'][1]['id'], 'count': 1})
+        first, second, third = [frame['id'] for frame in project['frames']]
+        layer = project['frames'][2]['layers'][0]['id']
+        project = self.mutate(project, f'frames/{third}/layers/{layer}/draw', {'tool': 'rectangle', 'color': '#0000ffff', 'points': [[4, 4], [12, 12]], 'filled': True})
+        project = self.mutate(project, 'clips', {'name': '动态循环', 'frame_ids': [first, second, third], 'direction': 'forward', 'repeat': 0})
+        clip_id = project['clips'][0]['id']
+        project = self.mutate(project, 'maps', {'columns': 2, 'rows': 2, 'tile_width': 16, 'tile_height': 16, 'tiles': [first, third]})
+        map_id = project['tilemaps'][0]['id']
+        project = self.mutate(project, f'maps/{map_id}/animation', {'tile': 1, 'clip_id': clip_id})
+        project = self.mutate(project, f'maps/{map_id}/paint', {'tile': 1, 'cells': [[0, 0]]})
+        before = [self.call('GET', self.base(project) + f'/maps/{map_id}/image?time_ms={at}') for at in (150, 250)]
+        result = self.mutate(project, 'deduplicate', {})
+        project, cleanup = result['project'], result['cleanup']
+        self.assertEqual(len(project['frames']), 2)
+        clip = project['clips'][0]
+        self.assertEqual([item['duration'] for item in clip['exposures']], [100, 100, 100])
+        self.assertEqual(self.clip_total(project, clip['id']), 300)
+        after = [self.call('GET', self.base(project) + f'/maps/{map_id}/image?time_ms={at}') for at in (150, 250)]
+        self.assertEqual(before, after)
+
     def test_ninepatch_preserves_corners(self):
         image = Image.new('RGBA', (16, 16), 'white')
         image.paste('red', (0, 0, 4, 4))

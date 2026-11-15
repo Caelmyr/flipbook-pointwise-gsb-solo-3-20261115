@@ -1,9 +1,11 @@
 import hashlib
+import json
 import math
 import numpy as np
 from PIL import Image, ImageDraw
 from . import validate as v
 from .composite import render_frame, trim_bounds, difference, png_bytes
+from .exposures import clip_exposures
 from .palettes import color_inventory
 
 
@@ -140,32 +142,166 @@ def repeat_preview(image, columns=3, rows=3):
     return output
 
 
+def cleanup_scan(store, project, adjacent_only=True):
+    frames = []
+    for index, frame in enumerate(project['frames']):
+        image = render_frame(store, project, frame['id'])
+        frames.append({
+            'id': frame['id'],
+            'name': frame['name'],
+            'index': index,
+            'duration': frame['duration'],
+            'digest': hashlib.sha256(image.tobytes()).hexdigest(),
+            'boxes': frame.get('boxes', []),
+            'pivot': frame.get('pivot', [0.5, 0.5]),
+        })
+    for info in frames:
+        info['signature'] = json.dumps([info['digest'], info['boxes'], info['pivot']],
+                                       ensure_ascii=False, sort_keys=True)
+    kept = []
+    removed = {}
+    outcomes = {}
+    targets = {}
+    siblings = {}
+    previous = None
+    for info in frames:
+        target = None
+        if adjacent_only:
+            if kept and previous is not None and previous['signature'] == info['signature']:
+                target = kept[-1]
+        else:
+            target = targets.get(info['signature'])
+        if target is not None and target['duration'] + info['duration'] <= 10000:
+            target['duration'] += info['duration']
+            target['absorbed'].append(info)
+            removed[info['id']] = target['id']
+            outcomes[info['id']] = ('merged', target)
+            previous = info
+            continue
+        entry = dict(info, absorbed=[])
+        kept.append(entry)
+        if not adjacent_only:
+            targets[info['signature']] = entry
+        if target is not None:
+            outcomes[info['id']] = ('duration', target)
+        else:
+            sibling = None
+            if adjacent_only:
+                if previous is not None and previous['digest'] == info['digest']:
+                    sibling = previous
+            else:
+                sibling = siblings.get(info['digest'])
+            if sibling is not None:
+                outcomes[info['id']] = ('metadata', sibling)
+        siblings.setdefault(info['digest'], entry)
+        previous = info
+    return {'frames': frames, 'kept': kept, 'removed': removed, 'outcomes': outcomes}
+
+
+def playback_sequence(clip, exposures, digests):
+    items = [(digests[item['frame_id']], item['duration']) for item in exposures]
+    if clip['direction'] == 'reverse':
+        items = items[::-1]
+    elif clip['direction'] == 'pingpong':
+        items = items + items[-2:0:-1]
+    return items
+
+
+def cleanup_preview(store, project, adjacent_only=True, scan=None):
+    scan = scan or cleanup_scan(store, project, adjacent_only)
+    removed = scan['removed']
+    changed = set(removed) | {entry['id'] for entry in scan['kept'] if entry['absorbed']}
+    digests = {info['id']: info['digest'] for info in scan['frames']}
+    mergeable = []
+    for entry in scan['kept']:
+        if entry['absorbed']:
+            mergeable.append({
+                'keep': {'id': entry['id'], 'name': entry['name'], 'index': entry['index']},
+                'absorbed': [{'id': item['id'], 'name': item['name'], 'index': item['index'],
+                              'duration': item['duration']} for item in entry['absorbed']],
+                'result_duration': entry['duration'],
+            })
+    unmergeable = []
+    for info in scan['frames']:
+        outcome = scan['outcomes'].get(info['id'])
+        if outcome is None or outcome[0] == 'merged':
+            continue
+        kind, other = outcome
+        if kind == 'duration':
+            reason = f'画面、碰撞框与枢轴均与「{other["name"]}」一致，但累加时长会超过单帧10000ms上限，两帧都保留'
+        else:
+            differ = []
+            if info['boxes'] != other['boxes']:
+                differ.append('碰撞框')
+            if info['pivot'] != other['pivot']:
+                differ.append('枢轴')
+            reason = f'画面与「{other["name"]}」逐像素相同，但{"、".join(differ)}不同，合并会丢失动作含义，两帧都保留'
+        unmergeable.append({'id': info['id'], 'name': info['name'], 'index': info['index'], 'reason': reason})
+    clips = []
+    for clip in project.get('clips', []):
+        exposures = clip_exposures(project, clip)
+        affected = any(item['frame_id'] in changed for item in exposures)
+        before = playback_sequence(clip, exposures, digests)
+        moved = [{'frame_id': removed.get(item['frame_id'], item['frame_id']), 'duration': item['duration']}
+                 for item in exposures]
+        after = playback_sequence(clip, moved, digests)
+        clips.append({
+            'id': clip['id'],
+            'name': clip['name'],
+            'affected': affected,
+            'before_duration': sum(duration for _, duration in before),
+            'after_duration': sum(duration for _, duration in after),
+            'timing_preserved': before == after,
+        })
+    tilemaps = []
+    for tilemap in project.get('tilemaps', []):
+        remapped = sum(1 for key in tilemap['tiles'] if key in removed)
+        if remapped:
+            tilemaps.append({'id': tilemap['id'], 'name': tilemap['name'], 'remapped_slots': remapped,
+                             'note': '瓦片槽位数量、顺序与图层翻转标记保持不变'})
+    return {
+        'adjacent_only': adjacent_only,
+        'before': {'frames': len(scan['frames']),
+                   'total_duration': sum(info['duration'] for info in scan['frames'])},
+        'after': {'frames': len(scan['kept']),
+                  'total_duration': sum(entry['duration'] for entry in scan['kept'])},
+        'mergeable': mergeable,
+        'unmergeable': unmergeable,
+        'clips': clips,
+        'tilemaps': tilemaps,
+        'note': '只合并画面逐像素相同、碰撞框与枢轴一致的帧，时长累加到保留帧，时间轴总时长不变；'
+                '被动作片段或地图引用的重复画面照常整理，各片段保留自己的曝光时序与往返端点。',
+    }
+
+
 def duplicate_cleanup(store, project_id, revision, adjacent_only=True):
     with store.edit(project_id, revision, '合并重复帧') as project:
-        hashes = {}
-        kept = []
-        removed = {}
-        previous_hash = None
-        for frame in project['frames']:
-            image = render_frame(store, project, frame['id'])
-            digest = hashlib.sha256(image.tobytes()).hexdigest()
-            target = kept[-1] if adjacent_only and digest == previous_hash and kept else None
-            if not adjacent_only:
-                target = hashes.get(digest)
-            if target is not None and target['duration'] + frame['duration'] <= 10000:
-                target['duration'] += frame['duration']
-                removed[frame['id']] = target['id']
-            else:
-                kept.append(frame)
-                hashes[digest] = frame
-            previous_hash = digest
-        project['frames'] = kept
+        scan = cleanup_scan(store, project, adjacent_only)
+        removed = scan['removed']
+        if not removed:
+            raise v.Invalid('没有可安全合并的重复画面')
+        report = cleanup_preview(store, project, adjacent_only, scan)
+        changed = set(removed) | {entry['id'] for entry in scan['kept'] if entry['absorbed']}
+        durations = {frame['id']: frame['duration'] for frame in project['frames']}
         for clip in project['clips']:
-            ids = [removed.get(key, key) for key in clip['frame_ids']]
-            clip['frame_ids'] = list(dict.fromkeys(ids))
+            exposures = clip.get('exposures')
+            if exposures is None:
+                exposures = [{'frame_id': key, 'duration': durations[key]} for key in clip['frame_ids']]
+            if not any(item['frame_id'] in changed for item in exposures):
+                continue
+            clip['exposures'] = [{'frame_id': removed.get(item['frame_id'], item['frame_id']),
+                                  'duration': item['duration']} for item in exposures]
+            clip['frame_ids'] = list(dict.fromkeys(removed.get(key, key) for key in clip['frame_ids']))
+        frames = {frame['id']: frame for frame in project['frames']}
+        project['frames'] = [frames[entry['id']] for entry in scan['kept']]
+        for entry in scan['kept']:
+            frames[entry['id']]['duration'] = entry['duration']
         for tilemap in project['tilemaps']:
             tilemap['tiles'] = [removed.get(key, key) for key in tilemap['tiles']]
-    return store.get(project_id)
+        for workspace in project.get('atlas_workspaces', []):
+            workspace['locked'] = list(dict.fromkeys(removed.get(key, key)
+                                                     for key in workspace.get('locked', [])))
+    return {'project': store.get(project_id), 'cleanup': report}
 
 
 

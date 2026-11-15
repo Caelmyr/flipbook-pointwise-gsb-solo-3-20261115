@@ -8,7 +8,7 @@ from .composite import render_frame, onion_skin, preview, png_bytes, difference
 from .importing import import_into_project, import_new_project, slice_sheet, import_project_bundle
 from .atlas_import import import_atlas
 from .atlas import build_atlas
-from .analysis import animation_report, frame_metrics, seam_metrics, loop_seam, repeat_preview, alpha_collision, motion_contact_sheet, duplicate_cleanup
+from .analysis import animation_report, frame_metrics, seam_metrics, loop_seam, repeat_preview, alpha_collision, motion_contact_sheet, duplicate_cleanup, cleanup_preview
 from .geometry import resize_canvas, crop_all, trim_all, align_content, rotate_canvas
 from .exporting import json_bytes, timeline_csv, tiled_bundle
 from .pipelines import effect_pipeline, motion_trail, typewriter, radial_burst, temporal_average
@@ -469,6 +469,12 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
             threshold = v.integer(data.get('threshold', 1), '透明度阈值', 1, 255)
             image, details = alpha_collision(first, second, dx, dy, threshold)
             return image_response(image) if data.get('image') is True else jsonify(details)
+
+    @api.get('/projects/<key>/deduplicate-preview')
+    def deduplicate_preview(key):
+        adjacent = request.args.get('adjacent_only', 'true') != 'false'
+        with store.lock:
+            return jsonify(cleanup_preview(store, store.get(key), adjacent))
 
     @api.post('/projects/<key>/deduplicate')
     def deduplicate(key):

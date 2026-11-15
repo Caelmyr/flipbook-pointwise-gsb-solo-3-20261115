@@ -148,6 +148,7 @@ function openToolbox(group='全部'){
   const body=dialog('动画与图像工具箱'),nav=element('div',undefined,'group-tabs');for(const category of ['全部',...new Set(S.catalog.tools.map(t=>t.group))]){const b=element('button',category);if(category===group)b.className='primary';b.onclick=()=>openToolbox(category);nav.append(b)}const recipeButton=element('button','像素效果配方');recipeButton.onclick=guard(openRecipes);nav.append(recipeButton);body.append(nav);const grid=element('div',undefined,'tool-list');for(const tool of S.catalog.tools.filter(t=>group==='全部'||t.group===group)){const b=element('button',undefined,'tool-card');b.append(element('small',tool.group),element('b',tool.title),element('p',tool.note));b.onclick=guard(()=>openTool(tool.key));grid.append(b)}body.append(grid);
 }
 function openTool(key){
+  if(key==='deduplicate')return openDeduplicate();
   project();const tool=S.catalog.tools.find(t=>t.key===key);const body=dialog(tool.title),layout=element('div',undefined,'dialog-grid'),controls=element('div'),output=element('div',undefined,'tool-output');controls.append(element('p',tool.note,'hint'));controls.append(element('p',`当前第${project().frames.findIndex(f=>f.id===S.frame)+1}帧；目标 ${ids().length} 帧。`,'muted'));
   controls.append(form(tool.fields,'运行 '+tool.title,async values=>{
     output.replaceChildren(element('p','正在处理…','muted'));const path=endpoint(tool.path.replace('{frame}',currentFrame().id)),data=toolData(values);if(tool.key==='collision')data.image=true;let result;
@@ -159,6 +160,54 @@ function openTool(key){
   }));layout.append(controls,output);body.append(layout);if(tool.method==='GET')controls.querySelector('form').requestSubmit();
 }
 $('diagnostics').onclick=guard(()=>openTool('analysis'));
+async function openDeduplicate(){
+  project();
+  const body=dialog('整理重复画面');
+  body.append(element('p','只有画面逐像素相同、碰撞框与枢轴也一致的帧才会合并：被合并帧的时长累加到保留帧，时间轴总时长不变。画面相同但碰撞框或枢轴不同的帧会保留并说明原因；被动作片段或地图引用的重复画面照常整理，各片段保留自己的曝光时序与往返端点，地图瓦片槽位与翻转含义不变。','hint'));
+  const layout=element('div',undefined,'dialog-grid'),controls=element('div'),output=element('div',undefined,'tool-output');
+  layout.append(controls,output);body.append(layout);
+  const adjacentField=field(check('adjacent_only','仅合并相邻重复（关闭后可整理被不同动作片段复用的非相邻重复画面）',true)),adjacentInput=adjacentField.querySelector('input');
+  const run=element('button','执行整理','primary');run.disabled=true;
+  const hint=element('p','正在分析重复画面…','hint');
+  controls.append(adjacentField,run,hint);
+  function planRows(data){
+    output.replaceChildren();
+    renderData({'整理前':`${data.before.frames} 帧 / ${data.before.total_duration} ms`,'整理后':`${data.after.frames} 帧 / ${data.after.total_duration} ms`,'可合并组':data.mergeable.length,'保留并说明':data.unmergeable.length},output);
+    if(data.mergeable.length){
+      output.append(element('h3','将合并的重复画面'));
+      renderData(data.mergeable.map(g=>({'保留帧':`${g.keep.index+1}. ${g.keep.name}`,'合并掉':g.absorbed.map(a=>`${a.index+1}. ${a.name}（${a.duration}ms）`).join('、'),'累加后时长':g.result_duration+' ms'})),output);
+    }else output.append(element('p','没有可安全合并的重复画面。','muted'));
+    if(data.unmergeable.length){
+      output.append(element('h3','画面相同但保留的帧'));
+      renderData(data.unmergeable.map(item=>({'帧':`${item.index+1}. ${item.name}`,'保留原因':item.reason})),output);
+    }
+    if(data.clips.length){
+      output.append(element('h3','动作片段曝光时序对照'));
+      renderData(data.clips.map(c=>({'片段':c.name,'受整理影响':c.affected?'是':'否','整理前时长':c.before_duration+' ms','整理后时长':c.after_duration+' ms','曝光时序与往返端点':c.timing_preserved?'保持不变':'有变化'})),output);
+    }
+    if(data.tilemaps.length){
+      output.append(element('h3','瓦片地图'));
+      renderData(data.tilemaps.map(m=>({'地图':m.name,'重指向槽位':m.remapped_slots,'说明':m.note})),output);
+    }
+  }
+  async function refresh(){
+    run.disabled=true;hint.textContent='正在分析重复画面…';
+    const plan=await api(endpoint('deduplicate-preview')+'?adjacent_only='+(adjacentInput.checked?'true':'false'));
+    planRows(plan);
+    run.disabled=!plan.mergeable.length;
+    hint.textContent=plan.mergeable.length?`可合并 ${plan.mergeable.reduce((n,g)=>n+g.absorbed.length,0)} 帧，时间轴总时长保持 ${plan.before.total_duration} ms；整理后可撤销。`:'没有需要整理的重复画面。';
+  }
+  adjacentInput.onchange=guard(refresh);
+  run.onclick=guard(async()=>{
+    const result=await work('整理重复画面…',()=>post(endpoint('deduplicate'),{adjacent_only:adjacentInput.checked,revision:project().revision}));
+    await acceptProject(result.project);
+    planRows(result.cleanup);
+    output.prepend(element('p','整理完成，已保存为新修订；上表为整理前后对照，可用顶部“撤销”回到整理前。','hint'));
+    run.disabled=true;hint.textContent='整理完成，可撤销；切换选项可重新分析。';
+    status('重复画面整理完成 · 可撤销');
+  });
+  await refresh();
+}
 $('paletteTools').onclick=guard(async()=>{
   project();const body=dialog('共享调色板工坊'),layout=element('div',undefined,'dialog-grid'),controls=element('div'),output=element('div',undefined,'tool-output');let palette=project().palette.slice();
   function showPalette(){output.replaceChildren();const swatches=element('div',undefined,'palette-result');for(const color of palette){const b=element('button',undefined,'swatch');b.title=color;b.style.background=color.slice(0,7);b.onclick=()=>$('color').value=color.slice(0,7);swatches.append(b)}output.append(swatches);const editor=element('textarea');editor.value=JSON.stringify(palette);editor.style.width='100%';output.append(editor);const save=element('button','保存调色板（不改像素）');save.onclick=guard(async()=>{palette=JSON.parse(editor.value);await mutate('保存共享调色板…',endpoint(),{palette},'PATCH');showPalette()});const apply=element('button','将调色板映射到目标帧');apply.onclick=guard(async()=>{palette=JSON.parse(editor.value);await mutate('应用调色板减色…',endpoint('palette/apply'),{palette,dither:controls.querySelector('[name="dither"]').value,frame_ids:ids()});status('调色板已应用，像素已更新')});output.append(element('p'),save,element('p'),apply)}

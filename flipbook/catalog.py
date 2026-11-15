@@ -67,7 +67,7 @@ def catalog():
     ))
     tools.append(tool('reverse', '反转帧序', '时间轴', 'reverse', note='仅反转勾选帧所在的位置，其他帧不移动。'))
     tools.append(tool('pingpong', '生成往返循环', '时间轴', 'pingpong', note='至少三帧，倒序复制中间帧，端点不重复。'))
-    tools.append(tool('deduplicate', '合并重复画面', '时间轴', 'deduplicate', [boolean('adjacent_only', '仅合并相邻重复', True)], note='重复帧时长累加保留，单帧合计不能超过10000ms。'))
+    tools.append(tool('deduplicate', '合并重复画面', '时间轴', 'deduplicate', [boolean('adjacent_only', '仅合并相邻重复', True)], note='画面、碰撞框与枢轴一致的重复帧合并并累加时长；各动作片段保留自己的曝光时序与往返端点，地图瓦片槽位与翻转含义不变。整理前会说明可合并与保留原因，整理后可比较、可撤销。'))
     tools.append(tool('flatten', '合并可见图层', '图层', 'flatten', note='合成为一个普通混合图层，有锁定图层时拒绝。'))
     tools.append(tool(
         'effect', '像素效果', '像素', 'effect', [
