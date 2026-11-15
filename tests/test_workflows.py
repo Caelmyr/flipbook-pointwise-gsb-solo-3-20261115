@@ -370,6 +370,117 @@ class Workflows(unittest.TestCase):
         finally:
             another.extensions['jobs'].executor.shutdown(wait=True)
 
+    def _draw_pixel(self, project, frame_index, color, point):
+        frame = project['frames'][frame_index]
+        return self.mutate(project, f"frames/{frame['id']}/layers/{frame['layers'][0]['id']}/draw", {
+            'tool': 'pencil', 'color': color, 'points': [point], 'size': 1,
+        })
+
+    def test_tile_palette_banks_pinned_and_temporal_coherence(self):
+        project = self.new(16, 16)
+        frame = project['frames'][0]
+        draw_path = f"frames/{frame['id']}/layers/{frame['layers'][0]['id']}/draw"
+        project = self.mutate(project, draw_path, {'tool': 'rectangle', 'color': '#ff0000ff',
+                                                   'points': [[1, 1], [6, 6]], 'filled': True})
+        project = self.mutate(project, 'frames', {'after': project['frames'][0]['id'], 'count': 1})
+        second = project['frames'][1]
+        project = self.mutate(project, f"frames/{second['id']}/layers/{second['layers'][0]['id']}/draw",
+                              {'tool': 'rectangle', 'color': '#0000ffff', 'points': [[10, 1], [14, 6]], 'filled': True})
+        plan = self.call('POST', self.base(project) + '/tile-palette/plan', {
+            'bank_count': 2, 'colors_per_tile': 4, 'tile_size': 8,
+            'pinned_colors': ['#000000'], 'protected_tiles': [{'gx': 0, 'gy': 0}],
+        })
+        self.assertTrue(plan['feasible'], plan['conflicts'])
+        self.assertEqual(plan['totals']['tile_instances'], 8)
+        for bank in plan['banks']:
+            self.assertIn('#000000', bank['colors'])
+            self.assertLessEqual(bank['used_slots'], 4)
+        protected = next(p for p in plan['positions'] if p['gx'] == 0 and p['gy'] == 0)
+        self.assertTrue(protected['protected'])
+        self.assertEqual(protected['tiles'][0]['local_colors'], ['#ff0000'])
+        self.assertIn('#000000', plan['banks'][protected['bank']]['colors'])
+        for position in plan['positions']:
+            self.assertEqual(len({tile['bank'] for tile in position['tiles']}), 1)
+        corner = next(p for p in plan['positions'] if p['gx'] == 0 and p['gy'] == 1)
+        self.assertTrue(corner['has_transparent'])
+        self.assertEqual(corner['visible_capacity'], 3)
+        self.assertGreater(plan['totals']['transparent_pixels'], 0)
+        before = np.asarray(self.image(project)).copy()
+        self.call('POST', self.base(project) + '/tile-palette/preview',
+                  {'bank_count': 2, 'colors_per_tile': 4, 'tile_size': 8, 'overlay': True})
+        np.testing.assert_array_equal(np.asarray(self.image(project)), before)
+
+    def test_tile_palette_protected_conflict_is_reported_not_hidden(self):
+        project = self.new(16, 16)
+        for color, point in zip(
+                ['#ff0000ff', '#00ff00ff', '#0000ffff', '#ffff00ff'],
+                [[9, 9], [11, 11], [13, 13], [14, 14]]):
+            project = self._draw_pixel(project, 0, color, point)
+        plan = self.call('POST', self.base(project) + '/tile-palette/plan', {
+            'bank_count': 4, 'colors_per_tile': 4, 'tile_size': 8,
+            'protected_tiles': [{'gx': 1, 'gy': 1}],
+        })
+        self.assertFalse(plan['feasible'])
+        self.assertEqual(plan['conflicts'][0]['gx'], 1)
+        self.assertEqual(plan['conflicts'][0]['needed_visible'], 4)
+        self.assertEqual(plan['conflicts'][0]['capacity_visible'], 3)
+        response = self.client.post(self.base(project) + '/tile-palette/export', json={
+            'bank_count': 4, 'colors_per_tile': 4, 'tile_size': 8,
+            'protected_tiles': [{'gx': 1, 'gy': 1}],
+        })
+        self.assertEqual(response.status_code, 409)
+        response.close()
+        bad = self.client.post(self.base(project) + '/tile-palette/plan', json={
+            'bank_count': 2, 'colors_per_tile': 2,
+            'pinned_colors': ['#ff0000ff', '#00ff00ff', '#0000ffff'],
+        })
+        self.assertEqual(bad.status_code, 400)
+        bad.close()
+
+    def test_tile_palette_export_roundtrip_reconstruction(self):
+        project = self.demo('robot')
+        payload = self.call('POST', self.base(project) + '/tile-palette/export', {
+            'bank_count': 8, 'colors_per_tile': 4, 'tile_size': 8,
+            'pinned_colors': ['#000000'], 'frame_ids': [project['frames'][0]['id']],
+        })
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            names = archive.namelist()
+            data = json.loads(archive.read('tile-palette/tile-palette.json'))
+            self.assertTrue(data['verification']['all_exact'])
+            self.assertTrue(data['verification']['indices_within_slots'])
+            index_files = [name for name in names if name.endswith('.index.png')]
+            self.assertEqual(len(index_files), 1)
+            with Image.open(io.BytesIO(archive.read(index_files[0]))) as image:
+                index_array = np.asarray(image)
+                self.assertEqual(image.size, (64, 64))
+                self.assertLessEqual(int(index_array.max()), 3)
+            shipped = Image.open(io.BytesIO(archive.read(
+                next(name for name in names if name.endswith('.png') and 'index' not in name and 'banks' not in name)
+            ))).convert('RGBA')
+            rebuilt = np.zeros_like(np.asarray(shipped))
+            ts = 8
+            for position in data['positions']:
+                record = position['tiles'][0]
+                local = [tuple(int(color[i:i + 2], 16) for i in (1, 3, 5)) for color in record['local_colors']]
+                gx, gy = position['gx'], position['gy']
+                x0, y0 = gx * ts, gy * ts
+                x1, y1 = min(x0 + ts, 64), min(y0 + ts, 64)
+                tile = index_array[y0:y1, x0:x1]
+                target = rebuilt[y0:y1, x0:x1]
+                if not local:
+                    continue
+                if record['transparent_slot']:
+                    visible = tile > 0
+                    target[visible] = [(*local[value - 1], 255) for value in tile[visible]]
+                else:
+                    target[:] = np.asarray(
+                        [(*local[value], 255) for value in tile.reshape(-1)], dtype=np.uint8
+                    ).reshape(target.shape)
+            np.testing.assert_array_equal(rebuilt, np.asarray(shipped))
+        # original editable project keeps its full-color frames
+        raster = np.asarray(self.image(project, 0))
+        self.assertTrue(np.any(raster[:, :, 3] > 0))
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

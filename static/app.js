@@ -163,8 +163,143 @@ $('paletteTools').onclick=guard(async()=>{
   project();const body=dialog('共享调色板工坊'),layout=element('div',undefined,'dialog-grid'),controls=element('div'),output=element('div',undefined,'tool-output');let palette=project().palette.slice();
   function showPalette(){output.replaceChildren();const swatches=element('div',undefined,'palette-result');for(const color of palette){const b=element('button',undefined,'swatch');b.title=color;b.style.background=color.slice(0,7);b.onclick=()=>$('color').value=color.slice(0,7);swatches.append(b)}output.append(swatches);const editor=element('textarea');editor.value=JSON.stringify(palette);editor.style.width='100%';output.append(editor);const save=element('button','保存调色板（不改像素）');save.onclick=guard(async()=>{palette=JSON.parse(editor.value);await mutate('保存共享调色板…',endpoint(),{palette},'PATCH');showPalette()});const apply=element('button','将调色板映射到目标帧');apply.onclick=guard(async()=>{palette=JSON.parse(editor.value);await mutate('应用调色板减色…',endpoint('palette/apply'),{palette,dither:controls.querySelector('[name="dither"]').value,frame_ids:ids()});status('调色板已应用，像素已更新')});output.append(element('p'),save,element('p'),apply)}
   controls.append(form([num('count','提取颜色数',16,2,64),select('method','颜色提取算法','median',[['median','中位切分'],['coverage','最大覆盖']]),select('dither','应用时的抖动方式','none',[['none','不抖动'],['ordered','有序抖动'],['floyd','Floyd误差扩散']])],'从选中帧提取调色板',async data=>{const result=await work('提取共享颜色…',()=>post(endpoint('palette/extract'),{...data,frame_ids:ids()}));palette=result.palette;showPalette();renderData(result.inventory,output)}));
-  controls.append(form([text('first','渐变起色','#152437ff'),text('second','渐变终色','#66e2bdff'),num('count','色阶数量',8,2,64),select('space','色彩空间','rgb',[['rgb','RGB'],['hsv','HSV最短色相']])],'生成渐变色阶',async data=>{palette=(await post('/api/palette/ramp',data)).palette;showPalette()}));const cycle=element('button','从当前帧生成颜色循环');cycle.onclick=guard(async()=>{await mutate('生成调色板循环…',endpoint('palette/cycle'),{frame_id:currentFrame().id,count:Math.min(project().palette.length,16)});$('dialog').close()});controls.append(cycle);layout.append(controls,output);body.append(layout);showPalette();
+  controls.append(form([text('first','渐变起色','#152437ff'),text('second','渐变终色','#66e2bdff'),num('count','色阶数量',8,2,64),select('space','色彩空间','rgb',[['rgb','RGB'],['hsv','HSV最短色相']])],'生成渐变色阶',async data=>{palette=(await post('/api/palette/ramp',data)).palette;showPalette()}));const cycle=element('button','从当前帧生成颜色循环');cycle.onclick=guard(async()=>{await mutate('生成调色板循环…',endpoint('palette/cycle'),{frame_id:currentFrame().id,count:Math.min(project().palette.length,16)});$('dialog').close()});controls.append(cycle);
+  controls.append(openTilePaletteSection());
+  layout.append(controls,output);body.append(layout);showPalette();
 });
+
+function openTilePaletteSection(){
+  const section=element('div',undefined,'import-panel');
+  section.append(element('h3','受限色彩 · 分块色库'));
+  section.append(element('p','每块仅用同一色库的少量名额（透明像素占 1 个名额）；同一网格位置在全部帧固定归属同一色库，动作播放不会跳库。原动画帧不会被修改。','muted'));
+  const state={plan:null,protectedTiles:new Set(),pinned:[]};
+  const fields=[
+    num('bank_count','色库数量',8,1,32),
+    num('colors_per_tile','每块名额（含透明）',4,2,16),
+    num('tile_size','小块边长 px',8,4,32),
+    num('alpha_threshold','透明 Alpha 阈值',128,0,255),
+    text('pinned_colors','固定颜色（逗号分隔，每库保留）','#000000'),
+  ];
+  const f=form(fields,'生成归属与减色方案',async values=>{
+    const pinned=values.pinned_colors.split(/[,，\s]+/).map(s=>s.trim()).filter(Boolean);
+    state.pinned=pinned;
+    const payload={
+      bank_count:values.bank_count,colors_per_tile:values.colors_per_tile,tile_size:values.tile_size,
+      alpha_threshold:values.alpha_threshold,pinned_colors:pinned,frame_ids:ids(),
+      protected_tiles:[...state.protectedTiles].map(key=>{const[gx,gy]=key.split(',').map(Number);return{gx,gy}}),
+    };
+    state.plan=await work('计算分块色库归属与减色损失…',()=>post(endpoint('tile-palette/plan'),payload));
+    renderPlan();
+  });
+  section.append(f);
+  const pickerWrap=element('div');section.append(element('p'),pickerWrap);
+  const hint=element('p','点击下方当前帧画面上的小块切换重点保护（红色框）；保护块的原始颜色必须完整保留。','hint');
+  section.append(hint);
+  const pickerCanvas=element('canvas');pickerCanvas.className='tile-picker';
+  const pickerHint=element('p',`当前帧：${currentFrame().name}`,'muted');
+  pickerWrap.append(pickerHint,pickerCanvas);
+  const pickerImage=new Image();
+  const tileSize=()=>Number(section.querySelector('[name="tile_size"]').value);
+  function drawPicker(){
+    const p=project(),ts=tileSize(),scale=Math.max(1,Math.floor(220/p.width));
+    pickerCanvas.width=p.width*scale;pickerCanvas.height=p.height*scale;
+    const ctx=pickerCanvas.getContext('2d');ctx.imageSmoothingEnabled=false;
+    ctx.clearRect(0,0,pickerCanvas.width,pickerCanvas.height);
+    ctx.drawImage(pickerImage,0,0,pickerCanvas.width,pickerCanvas.height);
+    const cols=Math.ceil(p.width/ts),rows=Math.ceil(p.height/ts);
+    for(let gy=0;gy<rows;gy++)for(let gx=0;gx<cols;gx++){
+      const key=gx+','+gy,protectedNow=state.protectedTiles.has(key);
+      ctx.strokeStyle=protectedNow?'rgba(255,92,120,.95)':'rgba(255,255,255,.28)';
+      ctx.lineWidth=protectedNow?2:1;
+      ctx.strokeRect(gx*ts*scale+0.5,gy*ts*scale+0.5,ts*scale-1,ts*scale-1);
+    }
+  }
+  pickerImage.onload=drawPicker;
+  pickerImage.src=endpoint('frames')+'/'+currentFrame().id+'/image?rev='+project().revision;
+  pickerCanvas.onclick=guard(e=>{
+    const rect=pickerCanvas.getBoundingClientRect();
+    const x=Math.floor((e.clientX-rect.left)/rect.width*project().width);
+    const y=Math.floor((e.clientY-rect.top)/rect.height*project().height);
+    const gx=Math.floor(x/tileSize()),gy=Math.floor(y/tileSize()),key=gx+','+gy;
+    state.protectedTiles.has(key)?state.protectedTiles.delete(key):state.protectedTiles.add(key);
+    drawPicker();
+  });
+  section.querySelector('[name="tile_size"]').addEventListener('change',drawPicker);
+  const clearProtected=element('button','清空保护小块');
+  clearProtected.onclick=()=>{state.protectedTiles.clear();drawPicker()};
+  section.append(clearProtected);
+
+  const result=element('div',undefined,'tile-plan');section.append(element('p'),result);
+  function renderPlan(){
+    result.replaceChildren();
+    const plan=state.plan;
+    const summary=element('div',undefined,'metric-grid');
+    const metrics=[
+      ['色库使用',`${plan.totals.banks_used}/${plan.totals.banks_total}`],
+      ['小块/实例',`${plan.totals.positions}/${plan.totals.tile_instances}`],
+      ['保护小块',plan.totals.protected_positions],
+      ['透明像素',plan.totals.transparent_pixels],
+      ['总平方损失',plan.totals.total_squared_loss],
+      ['均方误差',plan.totals.mean_squared_error],
+    ];
+    for(const [key,value]of metrics){const card=element('div',undefined,'metric');card.append(element('small',key),element('strong',String(value)));summary.append(card)}
+    result.append(summary);
+    if(plan.conflicts.length){
+      const box=element('div',undefined,'form-error');
+      box.append(element('b',`存在 ${plan.conflicts.length} 个放不下保护要求的小块（不会暗中多用颜色，也不会换库规避）：`));
+      const list=element('ul');
+      for(const c of plan.conflicts.slice(0,20)){const li=element('li');li.textContent=`小块 (${c.gx}, ${c.gy})：${c.reason}`;list.append(li)}
+      box.append(list);result.append(box);
+    }else{
+      result.append(element('p','方案可行：所有保护小块的原始颜色均完整保留，固定颜色存在于每个色库。','hint'));
+    }
+    const bankWrap=element('details');bankWrap.open=true;
+    bankWrap.append(element('summary',`色库与小块归属（${plan.banks.length} 组）`));
+    for(const bank of plan.banks){
+      const row=element('div',undefined,'bank-row');
+      const title=element('small',`色库 ${bank.index} · ${bank.used_slots}/${bank.slots} 名额 · ${bank.positions.length} 块`);
+      row.append(title);
+      const sw=element('div',undefined,'palette-result');
+      for(const color of bank.colors){const b=element('button',undefined,'swatch');b.style.background=color;b.title=color;sw.append(b)}
+      row.append(sw);bankWrap.append(row);
+    }
+    result.append(bankWrap);
+    const tableWrap=element('div',undefined,'table-wrap');
+    const table=element('table'),thead=element('thead'),tr=element('tr');
+    for(const head of ['网格','色库','保护','透明名额','原始可见色','透明像素','损失'])tr.append(element('th',head));
+    thead.append(tr);table.append(thead);const tbody=element('tbody');
+    for(const pos of plan.positions.slice(0,400)){
+      const row=element('tr');
+      for(const value of [`(${pos.gx},${pos.gy})`,pos.bank,pos.protected?'是':'否',pos.has_transparent?`占1（可见${pos.visible_capacity}）`:'不占',pos.distinct_visible_colors,pos.transparent_pixels,pos.loss])row.append(element('td',String(value)));
+      tbody.append(row);
+    }
+    table.append(tbody);tableWrap.append(table);
+    const tableDetail=element('details');tableDetail.append(element('summary','逐小块归属与减色损失表'),tableWrap);result.append(tableDetail);
+    const actions=element('div',undefined,'inline-actions');
+    const downloadJson=element('button','下载方案 JSON');
+    downloadJson.onclick=()=>jsonDownload(plan,'tile-palette-plan.json');
+    const previewBtn=element('button','预览确认画面（含色库网格）');
+    previewBtn.onclick=guard(async()=>{
+      const blob=await work('渲染分块预览…',()=>post(endpoint('tile-palette/preview'),{...plan.parameters,frame_index:Math.min(project().frames.findIndex(f=>f.id===S.frame),plan.frames.length-1),overlay:true}));
+      const target=dialog('分块减色确认画面');showBlob(blob,target,'tile-palette-preview.png');
+      target.append(element('p','数字为该小块归属的色库编号，红框为保护小块。','hint'));
+    });
+    const exportBtn=element('button','下载索引像素与色库归属 ZIP','primary');
+    exportBtn.classList.add('primary');
+    exportBtn.onclick=guard(async()=>{
+      if(plan.conflicts.length)throw Error('仍有保护冲突，先调整参数或取消对应保护小块');
+      const blob=await work('打包索引像素、色库与还原校验…',async()=>{
+        const response=await fetch(endpoint('tile-palette/export'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(plan.parameters)});
+        if(!response.ok){const data=await response.json().catch(()=>({}));throw Error(data.error||`导出失败 (${response.status})`)}
+        return response.blob();
+      });
+      const url=URL.createObjectURL(blob);const a=element('a');a.href=url;a.download='tile-palette.zip';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      status('ZIP 内含索引 PNG、色库归属 JSON 与逐帧还原校验，原动画未改动');
+    });
+    actions.append(downloadJson,previewBtn,exportBtn);result.append(actions);
+  }
+  return section;
+}
 $('imports').onclick=guard(()=>{
   const body=dialog('图像、动画与精灵素材导入'),grid=element('div',undefined,'import-grid');
   function panel(title,note,fields,onFiles,multiple=false){const card=element('div',undefined,'import-panel');card.append(element('h3',title),element('p',note,'muted'));const file=element('input');file.type='file';file.multiple=multiple;card.append(file);const f=form(fields,'开始导入',async data=>{if(!file.files.length)throw Error('请先选择文件');await onFiles([...file.files],data)});card.append(f);grid.append(card)}

@@ -45,7 +45,7 @@ def selected(data, project):
     return data.get('frame_ids', [f['id'] for f in project['frames']])
 
 
-def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes):
+def create_api(store, layers, timeline, tween, palettes, tile_palettes, tilemaps, jobs, recipes):
     api = Blueprint('api', __name__, url_prefix='/api')
 
     @api.get('/health')
@@ -379,6 +379,21 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
     def cycle_palette(key):
         data = body()
         return jsonify(palettes.cycle(key, v.revision(data), data.get('frame_id'), data.get('count', 6)))
+
+    @api.post('/projects/<key>/tile-palette/plan')
+    def tile_palette_plan(key):
+        plan, _, _, _ = tile_palettes.plan(key, body())
+        return jsonify(plan)
+
+    @api.post('/projects/<key>/tile-palette/preview')
+    def tile_palette_preview(key):
+        image, _ = tile_palettes.preview(key, body())
+        return image_response(image)
+
+    @api.post('/projects/<key>/tile-palette/export')
+    def tile_palette_export(key):
+        payload, plan = tile_palettes.export(key, body())
+        return download(payload, 'tile-palette.zip', 'application/zip')
 
     @api.post('/projects/<key>/ink-roles')
     def ink_roles(key):

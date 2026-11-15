@@ -6,6 +6,7 @@ from .layers import Layers
 from .timeline import Timeline
 from .tween import Tween
 from .palettes import Palettes
+from .tile_palettes import TilePalettes
 from .tilemaps import Tilemaps
 from .jobs import Jobs
 from .recipes import Recipes
@@ -23,12 +24,13 @@ def create_app(data_dir=None):
     timeline = Timeline(store)
     tween = Tween(store)
     palettes = Palettes(store)
+    tile_palettes = TilePalettes(store)
     tilemaps = Tilemaps(store)
     jobs = Jobs(store)
     recipes = Recipes(store)
     recipes.ensure_defaults()
-    app.extensions.update(store=store, layers=layers, timeline=timeline, tween=tween, palettes=palettes, tilemaps=tilemaps, jobs=jobs, recipes=recipes)
-    app.register_blueprint(create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes))
+    app.extensions.update(store=store, layers=layers, timeline=timeline, tween=tween, palettes=palettes, tile_palettes=tile_palettes, tilemaps=tilemaps, jobs=jobs, recipes=recipes)
+    app.register_blueprint(create_api(store, layers, timeline, tween, palettes, tile_palettes, tilemaps, jobs, recipes))
 
     @app.get('/')
     def index():
