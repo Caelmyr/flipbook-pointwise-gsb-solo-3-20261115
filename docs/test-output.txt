@@ -19,6 +19,7 @@ test_named_versions_restore_fork_compare (test_workflows.Workflows.test_named_ve
 test_ninepatch_preserves_corners (test_workflows.Workflows.test_ninepatch_preserves_corners) ... ok
 test_palette_extraction_and_mapping (test_workflows.Workflows.test_palette_extraction_and_mapping) ... ok
 test_pencil_draw_and_undo_redo (test_workflows.Workflows.test_pencil_draw_and_undo_redo) ... ok
+test_phase_inside_exposure_keeps_loop_duration (test_workflows.Workflows.test_phase_inside_exposure_keeps_loop_duration) ... ok
 test_pingpong_does_not_duplicate_endpoints (test_workflows.Workflows.test_pingpong_does_not_duplicate_endpoints) ... ok
 test_pipeline_atomic_rollback (test_workflows.Workflows.test_pipeline_atomic_rollback) ... ok
 test_project_bundle_roundtrip (test_workflows.Workflows.test_project_bundle_roundtrip) ... ok
@@ -26,11 +27,12 @@ test_retime_preserves_exact_total (test_workflows.Workflows.test_retime_preserve
 test_revision_conflict_and_invalid_inputs (test_workflows.Workflows.test_revision_conflict_and_invalid_inputs) ... ok
 test_seam_blend_matches_opposite_edges (test_workflows.Workflows.test_seam_blend_matches_opposite_edges) ... ok
 test_tilemap_fill_paint_and_export (test_workflows.Workflows.test_tilemap_fill_paint_and_export) ... ok
+test_tilemap_phase_matches_page_and_export (test_workflows.Workflows.test_tilemap_phase_matches_page_and_export) ... ok
 test_tilemap_reference_blocks_frame_deletion (test_workflows.Workflows.test_tilemap_reference_blocks_frame_deletion) ... ok
 test_time_resample_total_preserved (test_workflows.Workflows.test_time_resample_total_preserved) ... ok
 test_transform_tween_end_state (test_workflows.Workflows.test_transform_tween_end_state) ... ok
 
 ----------------------------------------------------------------------
-Ran 31 tests in 1.112s
+Ran 33 tests in 1.101s
 
 OK

@@ -273,6 +273,72 @@ class Workflows(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(len(self.store.get(project['id'])['frames']), 3)
 
+    def phased_map(self):
+        project = self.demo('tiles')
+        project = self.mutate(project, 'maps', {'columns': 4, 'rows': 2, 'tile_width': 16, 'tile_height': 16})
+        map_id = project['tilemaps'][0]['id']
+        clip = self.call('POST', self.base(project) + '/clips', {
+            'revision': project['revision'], 'name': '往返', 'direction': 'pingpong', 'repeat': 0,
+            'frame_ids': [frame['id'] for frame in project['frames']],
+        })
+        project = self.store.get(project['id'])
+        clip_id = clip['clips'][-1]['id']
+        project = self.mutate(project, f'maps/{map_id}/animation', {'tile': 1, 'clip_id': clip_id})
+        phases = {0: 0, 1: 175, 2: 220, 3: 176, 4: 0, 5: 175, 6: 1000, 7: 0}
+        for cell, phase in phases.items():
+            project = self.mutate(project, f'maps/{map_id}/paint', {
+                'tile': 1, 'phase_ms': phase, 'cells': [[cell % 4, cell // 4]],
+                'flip_x': cell == 5,
+            })
+        return project, map_id, phases
+
+    def test_tilemap_phase_matches_page_and_export(self):
+        from flipbook.map_animation import clip_schedule
+        project, map_id, phases = self.phased_map()
+        sequence = clip_schedule(project, project['clips'][-1]['id'])
+        total = sum(duration for _, duration in sequence)
+        for elapsed in [0, 40, 174, 175, 176, 219, 220, 521, 1000]:
+            live = Image.open(io.BytesIO(self.call('GET', self.base(project) + f'/maps/{map_id}/image?time_ms={elapsed}')))
+            exported = Image.open(io.BytesIO(self.call('GET', self.base(project) + f'/maps/{map_id}/image?time_ms={elapsed}&export_preview=true')))
+            np.testing.assert_array_equal(np.asarray(live), np.asarray(exported), err_msg=f'elapsed={elapsed}')
+        bundle = self.call('GET', self.base(project) + f'/maps/{map_id}/export')
+        with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
+            metadata = json.loads(archive.read('map.tmj'))
+            images = [name for name in archive.namelist() if name.startswith('tiles/')]
+        tiles = metadata['tilesets'][0]['tiles']
+        self.assertEqual(len(images), 3)
+        starts = {}
+        for cell, phase in sorted(phases.items()):
+            gid = metadata['layers'][0]['data'][cell] & 0x1FFFFFFF
+            entry = tiles[gid - metadata['tilesets'][0]['firstgid']]
+            self.assertEqual(entry['image'], 'tiles/1.png')
+            if cell == 5:
+                self.assertTrue(metadata['layers'][0]['data'][cell] & 0x80000000)
+            if phase % total:
+                starts.setdefault(phase % total, set()).add(entry['animation'][0]['tileid'])
+        self.assertEqual(len(starts), len({phase % total for phase in phases.values() if phase % total}))
+        self.assertTrue(all(len(value) == 1 for value in starts.values()))
+        for entry in tiles:
+            if entry.get('animation'):
+                self.assertEqual(sum(item['duration'] for item in entry['animation']), total)
+        for cell in (0, 4, 7):
+            self.assertEqual(metadata['layers'][0]['data'][cell], 1)
+
+    def test_phase_inside_exposure_keeps_loop_duration(self):
+        from flipbook.map_animation import clip_schedule, phase_profile, frame_at
+        project = self.demo('tiles')
+        clip = self.call('POST', self.base(project) + '/clips', {
+            'revision': project['revision'], 'name': '测试', 'direction': 'forward', 'repeat': 0,
+            'frame_ids': [frame['id'] for frame in project['frames']],
+        })
+        sequence = clip_schedule(self.store.get(project['id']), clip['clips'][-1]['id'])
+        total = sum(duration for _, duration in sequence)
+        for phase in [0, 1, 99, 100, 101, 199, 300, total - 1, total, total + 1]:
+            profile = phase_profile(sequence, phase)
+            self.assertEqual(sum(duration for _, duration in profile), total)
+            self.assertEqual(frame_at(profile, 0), frame_at(sequence, phase))
+            self.assertEqual(frame_at(profile, total - 1), frame_at(sequence, phase - 1))
+
     def test_named_versions_restore_fork_compare(self):
         project = self.paint(self.new())
         first = self.call('POST', self.base(project) + '/snapshots', {'name': '红色', 'revision': project['revision']}, 201)

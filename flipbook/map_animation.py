@@ -6,6 +6,7 @@ from .composite import render_frame
 
 
 GID_MASK = 0x1FFFFFFF
+FLIP_MASK = 0xE0000000
 
 
 def clip_schedule(project, clip_id):
@@ -30,6 +31,33 @@ def frame_at(sequence, elapsed):
         if elapsed < duration:
             return frame
         elapsed -= duration
+    raise v.Invalid('动作曝光序列无效')
+
+
+def phase_profile(sequence, phase):
+    """Rotate an exposure loop so `phase` becomes the first displayed moment.
+
+    A phase inside an exposure splits that exposure into its remaining part at
+    the start and the consumed part at the end, so the loop total stays the
+    same as the unshifted loop. A phase on an exposure boundary only rotates.
+    """
+    total = sum(duration for _, duration in sequence)
+    offset = phase % total
+    if offset == 0:
+        return list(sequence)
+    elapsed = 0
+    for index, (frame, duration) in enumerate(sequence):
+        if offset < elapsed + duration:
+            consumed = offset - elapsed
+            rotated = []
+            if consumed < duration:
+                rotated.append((frame, duration - consumed))
+            rotated.extend(sequence[index + 1:])
+            rotated.extend(sequence[:index])
+            if consumed > 0:
+                rotated.append((frame, consumed))
+            return rotated
+        elapsed += duration
     raise v.Invalid('动作曝光序列无效')
 
 
@@ -102,9 +130,11 @@ def render_live(store, project, tilemap, elapsed=0):
 
 
 def compile_resources(project, tilemap, base_document):
-    # Keep one timed definition per source tile; image files remain shared.
+    # Keep one timed definition per source tile and per instance phase profile.
+    # Image files stay shared, so repeated phases never duplicate pixels.
     document = deepcopy(base_document)
     tileset = document['tilesets'][0]
+    firstgid = tileset['firstgid']
     definitions = tileset['tiles']
     sources = {}
     static_ids = {}
@@ -112,12 +142,15 @@ def compile_resources(project, tilemap, base_document):
     for index, frame_id in enumerate(tilemap['tiles']):
         base_paths.setdefault(frame_id, f'tiles/{index + 1}.png')
 
-    def image_entry(identifier, frame_id, filename=None):
+    def image_entry(identifier, frame_id, filename=None, phase=None):
         filename = filename or base_paths.get(frame_id, 'tiles/' + frame_id + '.png')
         sources[filename] = frame_id
+        properties = [{'name': 'frameId', 'type': 'string', 'value': frame_id}]
+        if phase is not None:
+            properties.append({'name': 'phase', 'type': 'int', 'value': phase})
         return {'id': identifier, 'image': filename,
                 'imagewidth': tilemap['tile_width'], 'imageheight': tilemap['tile_height'],
-                'properties': [{'name': 'frameId', 'type': 'string', 'value': frame_id}]}
+                'properties': properties}
 
     for index, frame_id in enumerate(tilemap['tiles']):
         definitions[index] = image_entry(index, frame_id, f'tiles/{index + 1}.png')
@@ -129,10 +162,40 @@ def compile_resources(project, tilemap, base_document):
             definitions.append(image_entry(identifier, frame_id))
         return static_ids[frame_id]
 
-    for base, clip_id in tilemap.get('animations', {}).items():
-        sequence = clip_schedule(project, clip_id)
+    animations = {int(base): clip_schedule(project, clip_id)
+                  for base, clip_id in tilemap.get('animations', {}).items()}
+    for base, sequence in animations.items():
         animation = [{'tileid': static_frame(frame), 'duration': duration} for frame, duration in sequence]
-        definitions[int(base) - 1]['animation'] = animation
+        definitions[base - 1]['animation'] = animation
+
+    profiles = {}
+
+    def profile_tile(base, phase):
+        sequence = animations[base]
+        total = sum(duration for _, duration in sequence)
+        phase %= total
+        if phase == 0:
+            return base - 1
+        key = (base, phase)
+        if key not in profiles:
+            identifier = len(definitions)
+            entry = image_entry(identifier, tilemap['tiles'][base - 1], phase=phase)
+            entry['animation'] = [{'tileid': static_frame(frame), 'duration': duration}
+                                  for frame, duration in phase_profile(sequence, phase)]
+            profiles[key] = identifier
+            definitions.append(entry)
+        return profiles[key]
+
+    for layer, rendered in zip(tilemap['layers'], document['layers']):
+        offsets = layer.get('phase_offsets', {})
+        if not isinstance(offsets, dict):
+            offsets = {}
+        data = rendered['data']
+        for index, raw in enumerate(data):
+            base = raw & GID_MASK
+            if base not in animations:
+                continue
+            data[index] = (raw & FLIP_MASK) | (profile_tile(base, offsets.get(str(index), 0)) + firstgid)
     tileset['tilecount'] = len(definitions)
     return document, sources
 
