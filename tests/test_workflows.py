@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from copy import deepcopy
 from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
@@ -17,6 +18,8 @@ from flipbook.tween import premultiplied_crossfade, ease, bezier_position
 from flipbook.atlas import build_atlas
 from flipbook.atlas_import import unpack_sprite, validate_atlas
 from flipbook.ninepatch import nine_slice, seam_blend
+from flipbook.panels import solve_layout, default_grid, validate_margins
+from flipbook.panel_build import rasterize_layer
 from flipbook.exporting import animated_gif, animated_png, project_bundle
 
 
@@ -369,6 +372,232 @@ class Workflows(unittest.TestCase):
             self.assertEqual(actual['frames'][0]['layers'][0]['asset'], project['frames'][0]['layers'][0]['asset'])
         finally:
             another.extensions['jobs'].executor.shutdown(wait=True)
+
+    def _panel_source(self):
+        project = self.new(32, 32)
+        frame_id = project['frames'][0]['id']
+        base_id = project['frames'][0]['layers'][0]['id']
+
+        def draw(layer_id, color, points):
+            current = self.store.get(project['id'])
+            return self.mutate(current, f'frames/{frame_id}/layers/{layer_id}/draw', {
+                'tool': 'rectangle', 'color': color, 'points': points, 'filled': True})
+
+        project = draw(base_id, '#ffffffff', [[0, 0], [31, 31]])
+        project = draw(base_id, '#ff0000ff', [[0, 0], [5, 5]])
+        project = draw(base_id, '#0000ffff', [[26, 26], [31, 31]])
+        project = self.mutate(project, f'frames/{frame_id}/layers', {'name': '按钮层'})
+        button_id = project['frames'][0]['layers'][-1]['id']
+        project = draw(button_id, '#00ff00ff', [[4, 13], [27, 18]])
+        return project
+
+    def _create_panel(self, source, decorations=None, width=64, height=48):
+        payload = {'name': '面板作品', 'width': width, 'height': height,
+                   'left': 6, 'right': 6, 'top': 6, 'bottom': 6}
+        if decorations is not None:
+            payload['decorations'] = decorations
+        return self.call('POST', self.base(source) + '/panels', payload, 201)
+
+    def test_panel_keeps_layers_and_fixed_corners(self):
+        source = self._panel_source()
+        panel = self._create_panel(source, [
+            {'id': 'd1', 'name': '角饰', 'rect': [0, 0, 4, 4],
+             'attachment': {'target': 'edge', 'anchor': 'top_left'}},
+            {'id': 'd2', 'name': '跟随钉', 'rect': [0, 0, 2, 2],
+             'attachment': {'target': 'd1', 'anchor': 'bottom_right'}},
+        ])
+        self.assertEqual((panel['width'], panel['height']), (64, 48))
+        self.assertEqual(len(panel['frames'][0]['layers']), 2)
+        self.assertTrue(all(l.get('panel_source') for l in panel['frames'][0]['layers']))
+        image = self.image(panel)
+        self.assertEqual(image.getpixel((2, 2)), (255, 0, 0, 255))
+        self.assertEqual(image.getpixel((63, 47)), (0, 0, 255, 255))
+        self.assertNotEqual(image.getpixel((7, 2)), (255, 0, 0, 255))
+        placed = panel['frames'][0]['panel_workspace']['last_feasible']['decorations']
+        self.assertEqual(placed['d1'], [0, 0, 4, 4])
+        self.assertEqual(placed['d2'], [4, 4, 2, 2])
+
+    def test_panel_repeated_resize_uses_pristine_originals(self):
+        source = self._panel_source()
+        panel = self._create_panel(source)
+        panel_id = panel['id']
+        for width, height in [(80, 60), (48, 40), (96, 72), (64, 48)]:
+            panel = self.mutate(panel, 'panel/resize', {'width': width, 'height': height})
+            image = self.image(panel)
+            self.assertEqual(image.size, (width, height))
+            self.assertEqual(image.getpixel((2, 2)), (255, 0, 0, 255))
+            self.assertEqual(image.getpixel((width - 1, height - 1)), (0, 0, 255, 255))
+        # pristine originals are retained at the source size, not the canvas size
+        meta = panel['frames'][0]['layers'][0]['panel_source']
+        self.assertEqual(self.store.image(panel_id, meta['asset']).size, (32, 32))
+        self.assertTrue(self.call('GET', self.base(panel) + '/integrity')['valid'])
+
+    def test_panel_conflict_keeps_last_feasible_result(self):
+        source = self._panel_source()
+        panel = self._create_panel(source)
+        revision_before = panel['revision']
+        size_before = (panel['width'], panel['height'])
+        panel = self.call('PATCH', self.base(panel) + '/panel', {
+            'revision': revision_before,
+            'decorations': [{
+                'id': 'd3', 'name': '居中徽章', 'rect': [0, 0, 20, 6],
+                'attachment': {'target': 'edge', 'anchor': 'top'},
+                'center_x': True, 'min_gap': [10, 0, 10, 0],
+            }],
+        })
+        response = self.client.post(self.base(panel) + '/panel/resize', json={
+            'revision': panel['revision'], 'width': 24, 'height': 48})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('冲突', response.json['error'])
+        self.assertIn('居中', response.json['error'])
+        stored = self.store.get(panel['id'])
+        self.assertEqual(stored['revision'], panel['revision'])
+        self.assertEqual((stored['width'], stored['height']), size_before)
+        check = self.call('GET', self.base(panel) + '/panel/preview?check=true&width=24&height=48')
+        self.assertFalse(check['feasible'])
+        self.assertTrue(self.call('GET', self.base(panel) + '/panel/preview?check=true&width=80&height=48')['feasible'])
+
+    def test_panel_hand_edit_warns_before_recompute(self):
+        source = self._panel_source()
+        panel = self._create_panel(source)
+        layer = panel['frames'][0]['layers'][0]
+        panel = self.mutate(panel, f'frames/{panel["frames"][0]["id"]}/layers/{layer["id"]}/draw', {
+            'tool': 'pencil', 'color': '#ffff00ff', 'points': [[10, 10]]})
+        self.assertTrue(panel['frames'][0]['layers'][0].get('panel_diverged'))
+        response = self.client.post(self.base(panel) + '/panel/resize', json={
+            'revision': panel['revision'], 'width': 70, 'height': 50})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('手动修改', response.json['error'])
+        panel = self.mutate(panel, 'panel/resize',
+                           {'width': 70, 'height': 50, 'confirm_overwrite': True})
+        self.assertFalse(panel['frames'][0]['layers'][0].get('panel_diverged'))
+
+    def test_panel_preview_reopen_export_share_layout(self):
+        source = self._panel_source()
+        panel = self._create_panel(source)
+        panel = self.mutate(panel, 'panel/resize', {'width': 72, 'height': 56})
+        before = np.asarray(self.image(panel)).copy()
+        reloaded_app = create_app(self.temp.name)
+        try:
+            reloaded = reloaded_app.extensions['store'].get(panel['id'])
+            np.testing.assert_array_equal(
+                np.asarray(render_frame(reloaded_app.extensions['store'], reloaded, reloaded['frames'][0]['id'])), before)
+        finally:
+            reloaded_app.extensions['jobs'].executor.shutdown(wait=True)
+        bundle = project_bundle(self.store, panel)
+        response = self.client.post('/api/import-bundle',
+                                    data={'file': (io.BytesIO(bundle), 'panel.zip')})
+        self.assertEqual(response.status_code, 201)
+        restored = response.json
+        self.assertTrue(restored['frames'][0]['layers'][0]['panel_source']['asset'])
+        np.testing.assert_array_equal(np.asarray(self.image(restored)), before)
+
+    def test_panel_repeat_grid_tiles_without_stretching_fixed(self):
+        source = self._panel_source()
+        panel = self.call('POST', self.base(source) + '/panels', {
+            'name': '平铺面板', 'width': 64, 'height': 32,
+            'grid': {'columns': [
+                {'id': 'a', 'behavior': 'fixed', 'span': 6},
+                {'id': 'b', 'behavior': 'repeat', 'span': 8},
+                {'id': 'c', 'behavior': 'stretch', 'span': 10},
+                {'id': 'd', 'behavior': 'fixed', 'span': 8}],
+                'rows': [
+                {'id': 'r1', 'behavior': 'fixed', 'span': 6},
+                {'id': 'r2', 'behavior': 'repeat', 'span': 20},
+                {'id': 'r3', 'behavior': 'fixed', 'span': 6}]},
+        }, 201)
+        self.assertEqual((panel['width'], panel['height']), (64, 32))
+        image = self.image(panel)
+        self.assertEqual(image.getpixel((2, 2)), (255, 0, 0, 255))
+        # a repeat-only axis must demand an exact-size target instead of a gap
+        bad = self.client.post(self.base(source) + '/panels', json={
+            'name': '无拉伸', 'width': 64, 'height': 40,
+            'grid': {'columns': [
+                {'id': 'a', 'behavior': 'fixed', 'span': 6},
+                {'id': 'b', 'behavior': 'repeat', 'span': 20},
+                {'id': 'c', 'behavior': 'fixed', 'span': 6}],
+                'rows': [
+                {'id': 'r1', 'behavior': 'fixed', 'span': 6},
+                {'id': 'r2', 'behavior': 'repeat', 'span': 20},
+                {'id': 'r3', 'behavior': 'fixed', 'span': 6}]}})
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn('必须等于', bad.json['error'])
+
+    def test_panel_layout_solver_rejects_cycle_and_bad_grid(self):
+        workspace = {
+            'source_size': [32, 32],
+            'grid': default_grid(32, 32, validate_margins(32, 32, {'left': 6, 'right': 6, 'top': 6, 'bottom': 6})),
+            'decorations': [
+                {'id': 'a', 'name': '甲', 'rect': [0, 0, 4, 4], 'attachment': {'target': 'b', 'anchor': 'top_left'}},
+                {'id': 'b', 'name': '乙', 'rect': [0, 0, 4, 4], 'attachment': {'target': 'a', 'anchor': 'top_left'}},
+            ],
+        }
+        with self.assertRaises(ValueError):
+            from flipbook.panels import validate_workspace
+            validate_workspace(workspace)
+        bad = deepcopy(workspace)
+        bad['decorations'] = []
+        bad['grid']['columns'][1]['span'] = 99
+        with self.assertRaises(ValueError):
+            from flipbook.panels import validate_workspace
+            validate_workspace(bad)
+
+    def test_rasterize_layer_maps_each_cell_independently(self):
+        source_image = Image.new('RGBA', (16, 16), '#ffffffff')
+        source_image.paste('#ff0000ff', (0, 0, 4, 4))
+        workspace = {
+            'source_size': [16, 16],
+            'grid': default_grid(16, 16, (4, 4, 4, 4)),
+            'decorations': [],
+        }
+        layout = solve_layout(workspace, 32, 24)
+        output = rasterize_layer(source_image, layout['mapping'], 32, 24)
+        self.assertEqual(output.size, (32, 24))
+        self.assertEqual(output.getpixel((1, 1)), (255, 0, 0, 255))
+        self.assertEqual(output.getpixel((3, 3)), (255, 0, 0, 255))
+        self.assertNotEqual(output.getpixel((5, 1)), (255, 0, 0, 255))
+
+    def test_panel_rejects_malformed_input_without_500(self):
+        source = self._panel_source()
+        before = len(self.call('GET', '/api/projects'))
+        # malformed decoration (missing rect) must be a 400, not a crash
+        response = self.client.post(self.base(source) + '/panels', json={
+            'name': '坏面板', 'width': 64, 'height': 48,
+            'left': 6, 'right': 6, 'top': 6, 'bottom': 6,
+            'decorations': [{'id': 'x', 'name': '缺区域'}],
+        })
+        self.assertEqual(response.status_code, 400)
+        # decoration rect outside the source canvas is rejected
+        response = self.client.post(self.base(source) + '/panels', json={
+            'name': '越界面板', 'width': 64, 'height': 48,
+            'left': 6, 'right': 6, 'top': 6, 'bottom': 6,
+            'decorations': [{'id': 'x', 'name': '越界', 'rect': [30, 30, 10, 10],
+                             'attachment': {'target': 'edge', 'anchor': 'top_left'}}],
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('超出原稿画布', response.json['error'])
+        # grid segments not summing to the source extent are rejected
+        response = self.client.post(self.base(source) + '/panels', json={
+            'name': '坏网格', 'width': 64, 'height': 48,
+            'grid': {'columns': [{'behavior': 'fixed', 'span': 10}],
+                     'rows': [{'behavior': 'stretch', 'span': 32}]}})
+        self.assertEqual(response.status_code, 400)
+        # failed creation must not leave a panel project behind
+        self.assertEqual(len(self.call('GET', '/api/projects')), before)
+
+    def test_panel_resize_rejects_layer_without_pristine_source(self):
+        source = self._panel_source()
+        panel = self._create_panel(source)
+        # add an ordinary blank layer through the standard layer API
+        panel = self.mutate(panel, f'frames/{panel["frames"][0]["id"]}/layers', {'name': '无原稿层'})
+        self.assertFalse(panel['frames'][0]['layers'][-1].get('panel_source'))
+        response = self.client.post(self.base(panel) + '/panel/resize', json={
+            'revision': panel['revision'], 'width': 90, 'height': 60})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('没有分层原稿', response.json['error'])
+        # the feasible result is untouched after the rejection
+        stored = self.store.get(panel['id'])
+        self.assertEqual((stored['width'], stored['height']), (64, 48))
 
 
 if __name__ == '__main__':

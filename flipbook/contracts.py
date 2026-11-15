@@ -24,6 +24,13 @@ def validate_document(project):
                 raise v.Invalid('图层缺少变换')
             if set(layer['transform']) != set(v.transform({})):
                 raise v.Invalid('图层变换字段不完整')
+            panel_source = layer.get('panel_source')
+            if panel_source is not None:
+                v.digest(panel_source.get('asset'))
+                v.text(panel_source.get('workspace_id', ''), '面板工程编号', 60, False)
+        if frame.get('panel_workspace'):
+            from .panels import validate_document as validate_panel
+            validate_panel(project)
     clip_ids = set()
     for clip in v.array(project.get('clips', []), '动画片段', 100):
         clip_id = v.key(clip.get('id'))
@@ -98,11 +105,15 @@ def check_assets(store, project):
     from .atlas_workspaces import asset_sizes
     page_sizes = asset_sizes(project)
     assets.update(page_sizes)
+    from .panels import source_assets
+    panel_sizes = source_assets(project)
+    assets.update(panel_sizes)
     for asset in assets:
         checked.add(asset)
         try:
             image = store.image(project['id'], asset)
-            if image.size != page_sizes.get(asset, (project['width'], project['height'])):
+            expected = page_sizes.get(asset) or panel_sizes.get(asset) or (project['width'], project['height'])
+            if image.size != expected:
                 wrong_size.append(asset)
         except (OSError, ValueError):
             missing.append(asset)

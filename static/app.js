@@ -282,6 +282,97 @@ async function openCelTools(){
 }
 
 $('atlasWorkspace').onclick=guard(()=>openAtlasWorkspace());
+
+$('panelStudio').onclick=guard(openPanelStudio);
+function isPanelProject(p){return Boolean(p?.frames?.[0]?.panel_workspace)}
+function panelWorkspace(p){return p.frames[0].panel_workspace}
+async function openPanelStudio(){
+  const p=project(),body=dialog('分层可缩放面板工程');
+  body.append(element('p','面板从当前帧的分层原稿建立：固定边饰绝不拉伸，重复区域平铺，每次改尺寸都从原稿重算，跨伸缩边界的图层仍是独立可编辑图层。最小间距与居中冲突时会拒绝改动并保留上一次可行结果。','hint'));
+  if(isPanelProject(p)){renderPanelEditor(p,body);return}
+  const sourceLayers=p.frames.flatMap(f=>f.layers).length;
+  body.append(element('p',`将使用当前帧「${currentFrame().name}」的 ${sourceLayers} 个图层作为分层原稿，另建一个独立面板项目，源项目保持不变。`,'muted'));
+  const marginFields=[
+    num('left','左固定边饰',6,0,p.width-1),num('right','右固定边饰',6,0,p.width-1),
+    num('top','上固定边饰',6,0,p.height-1),num('bottom','下固定边饰',6,0,p.height-1),
+    num('width','面板初始宽度',96,8,2048),num('height','面板初始高度',80,8,2048),
+    text('name','面板名称','面板作品'),
+  ];
+  body.append(form(marginFields,'从分层原稿建立面板',async data=>{
+    const created=await work('建立面板工程…',()=>post(endpoint('panels'),{frame_id:currentFrame().id,...data}));
+    S.frame=S.layer=null;await acceptProject(created);$('dialog').close();
+    status('面板工程已建立，固定角饰与独立图层已保留');await openPanelStudio();
+  }));
+  body.append(element('p'),element('p','需要自定义多段网格（多个固定/平铺/拉伸段）或装饰附着关系时，先建立默认九宫格，再在面板编辑器里修改。','muted'));
+}
+
+function renderPanelEditor(p,body){
+  const ws=panelWorkspace(p);
+  const head=element('div',undefined,'panel-head');
+  head.append(element('h3',`${ws.name} · 原稿 ${ws.source_size.join('×')} → 当前 ${p.width}×${p.height}`));
+  const info=element('p',`独立图层 ${p.frames[0].layers.length} 个 · 修订 ${p.revision}`,'muted');
+  body.append(head,info);
+
+  // Live preview shared between resize check and decoration editing.
+  const previewBox=element('div',undefined,'panel-preview');
+  body.append(previewBox);
+  async function refreshPreview(width,height){
+    const url=endpoint(`panel/preview?rev=${p.revision}&width=${width}&height=${height}`);
+    previewBox.replaceChildren();
+    const img=element('img',undefined,'preview');img.style.imageRendering='pixelated';
+    img.src=url;previewBox.append(img);
+  }
+  refreshPreview(p.width,p.height);
+
+  // Resize with dry-run feasibility check before committing.
+  const resizeFields=[num('width','目标宽度',p.width,8,2048),num('height','目标高度',p.height,8,2048),check('confirm_overwrite','确认覆盖手动编辑过的图层')];
+  body.append(form(resizeFields,'检查可行性并改尺寸',async(data,f)=>{
+    const check=await api(endpoint(`panel/preview?check=true&width=${data.width}&height=${data.height}`));
+    if(!check.feasible){
+      f.querySelector('.form-error').textContent='约束冲突，已保留上一次可行结果：'+check.conflicts.join(' / ');
+      status('尺寸冲突，未改动面板',true);return;
+    }
+    const diverged=p.frames[0].layers.filter(l=>l.panel_diverged).map(l=>l.name);
+    if(diverged.length&&!data.confirm_overwrite){
+      f.querySelector('.form-error').textContent='手动修改过的图层将被原稿重算覆盖：'+diverged.join('、')+'；勾选确认后再提交。';
+      return;
+    }
+    const result=await mutate('从原稿重算面板尺寸…',endpoint('panel/resize'),data);
+    await openPanelStudio();status('面板已按原稿重算，固定边饰未拉伸');
+  }));
+
+  // Grid editor (fixed / stretch / repeat segments per axis).
+  const gridArea=element('details');gridArea.append(element('summary','网格段定义（固定 / 拉伸 / 平铺）'));
+  const gridText=element('textarea');gridText.rows=10;gridText.style.width='100%';
+  gridText.value=JSON.stringify(ws.grid,null,1);
+  gridArea.append(gridText);
+  const decArea=element('details');decArea.append(element('summary',`装饰与附着关系（${ws.decorations.length} 个）`));
+  const decText=element('textarea');decText.rows=12;decText.style.width='100%';
+  decText.value=JSON.stringify(ws.decorations,null,1);
+  decArea.append(decText);
+  decArea.append(element('p','装饰字段：rect=[x,y,宽,高]；attachment.target 为 edge 或另一装饰 id；anchor 为九锚点；center_x/center_y 居中；min_gap=[左,上,右,下] 最小间距。居中与最小间距冲突时会被拒绝。','muted'));
+  body.append(gridArea,decArea);
+  body.append(form([text('name','面板名称',ws.name)],'保存网格与装饰定义',async data=>{
+    let grid,decorations;
+    try{grid=JSON.parse(gridText.value)}catch{throw Error('网格 JSON 格式错误')}
+    try{decorations=JSON.parse(decText.value)}catch{throw Error('装饰 JSON 格式错误')}
+    const result=await mutate('保存面板网格与装饰…',endpoint('panel'),{...data,grid,decorations},'PATCH');
+    await openPanelStudio();status('面板定义已保存，并已按当前尺寸验证可行');
+  }));
+
+  // Last feasible snapshot and per-layer status.
+  if(ws.last_feasible){
+    body.append(element('p',`上一次可行结果：${ws.last_feasible.width}×${ws.last_feasible.height}；冲突的改尺寸不会覆盖它。`,'hint'));
+  }
+  const layerStatus=element('div',undefined,'panel-layers');
+  p.frames[0].layers.forEach(layer=>{
+    const row=element('div',undefined,'panel-layer-row');
+    row.append(element('span',layer.name),element('small',layer.panel_diverged?'已手动编辑（重算前需确认）':'与原稿同步'));
+    layerStatus.append(row);
+  });
+  body.append(layerStatus);
+}
+
 async function openAtlasWorkspace(identifier){
   const p=project(),body=dialog('图集工程与固定UV版本'),items=p.atlas_workspaces||[];
   body.append(element('p','固定图块保留已发布的槽位及原画采样区域，预留像素可容纳原位置附近的后续修改；其他图块可重新排列。每次成功生成独立版本，旧版仍可下载。','hint'));

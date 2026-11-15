@@ -169,6 +169,10 @@ def import_project_bundle(store, stream):
         from .atlas_workspaces import asset_sizes, workspaces
         page_sizes = asset_sizes(original)
         assets.update(page_sizes)
+        from .panels import source_assets
+        panel_sizes = source_assets(original)
+        assets.update(panel_sizes)
+        size_lookup = {**page_sizes, **panel_sizes}
         verified = {}
         for asset in assets:
             source = 'assets/' + v.digest(asset) + '.png'
@@ -176,7 +180,7 @@ def import_project_bundle(store, stream):
                 raise v.Invalid('归档缺少图层像素')
             sequence = decode_sequence(io.BytesIO(archive.read(source)), 1)
             image = sequence[0]['image']
-            if image.size != page_sizes.get(asset, (original['width'], original['height'])):
+            if image.size != size_lookup.get(asset, (original['width'], original['height'])):
                 raise v.Invalid('图层尺寸与画布不一致')
             verified[asset] = image
         created = store.create(original['name'][:100] + ' · 导入', original['width'], original['height'])
@@ -191,6 +195,8 @@ def import_project_bundle(store, stream):
                     layer['asset'] = mapping[layer['asset']]
                     if layer.get('role_legacy_asset'):
                         layer['role_legacy_asset'] = mapping[layer['role_legacy_asset']]
+                    if layer.get('panel_source'):
+                        layer['panel_source']['asset'] = mapping[layer['panel_source']['asset']]
             for workspace in workspaces(project):
                 for version in workspace['versions']:
                     version['page_asset'] = mapping[version['page_asset']]

@@ -348,6 +348,37 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
     def ninepatch(key):
         return jsonify(ninepatch_project(store, key, body())), 201
 
+    @api.post('/projects/<key>/panels')
+    def panel_create(key):
+        from .panel_build import create_workspace
+        return jsonify(create_workspace(store, key, body())), 201
+
+    @api.post('/projects/<key>/panel/resize')
+    def panel_resize(key):
+        from .panel_build import resize_workspace
+        return jsonify(resize_workspace(store, key, v.revision(body()), body()))
+
+    @api.patch('/projects/<key>/panel')
+    def panel_update(key):
+        from .panel_build import update_workspace
+        return jsonify(update_workspace(store, key, v.revision(body()), body()))
+
+    @api.get('/projects/<key>/panel/preview')
+    def panel_preview(key):
+        from .panel_build import preview_image
+        from .panels import describe
+        with store.lock:
+            project = store.get(key)
+            workspace = project['frames'][0].get('panel_workspace')
+            if not workspace:
+                raise v.Invalid('当前项目不是面板工程')
+            width = v.integer(request.args.get('width', project['width']), '预览宽度', 8, 2048)
+            height = v.integer(request.args.get('height', project['height']), '预览高度', 8, 2048)
+            if request.args.get('check') == 'true':
+                return jsonify(describe(workspace, width, height))
+            image, _ = preview_image(store, project, width, height)
+            return image_response(image)
+
     @api.post('/projects/<key>/seamless')
     def seamless(key):
         data = body()

@@ -155,6 +155,8 @@ class Layers:
                 image = self.store.image(project_id, layer['asset'])
                 image = draw(image, command)
                 layer['asset'] = self.store.put_image(project_id, image)
+            if layer.get('panel_source'):
+                layer['panel_diverged'] = True
         return self.store.get(project_id)
 
     def clear(self, project_id, revision, frame_id, layer_id):
@@ -170,6 +172,8 @@ class Layers:
             else:
                 blank = Image.new('RGBA', (project['width'], project['height']))
                 layer['asset'] = self.store.put_image(project_id, blank)
+            if layer.get('panel_source'):
+                layer['panel_diverged'] = True
         return self.store.get(project_id)
 
     def effect(self, project_id, revision, ids, layer_id, body):
@@ -204,6 +208,8 @@ class Layers:
                 require_detached(layer)
                 image = apply_effect(self.store.image(project_id, layer['asset']), body)
                 layer['asset'] = self.store.put_image(project_id, image)
+                if layer.get('panel_source'):
+                    layer['panel_diverged'] = True
         return self.store.get(project_id)
 
     def selection(self, project_id, revision, frame_id, layer_id, body):
