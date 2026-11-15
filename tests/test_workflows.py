@@ -371,5 +371,162 @@ class Workflows(unittest.TestCase):
             another.extensions['jobs'].executor.shutdown(wait=True)
 
 
+    def emitter_body(self, **overrides):
+        body = {
+            'name': '测试火花', 'seed': 42, 'origin': [16, 4], 'direction': 90, 'spread': 0,
+            'speed_min': 60, 'speed_max': 60, 'gravity_x': 0, 'gravity_y': 300,
+            'life_min': 800, 'life_max': 800, 'size': 2,
+            'color_start': '#ffe9a3ff', 'color_end': '#ff5f3cff',
+            'collision': 'bounce', 'restitution': .5, 'friction': 0,
+            'windows': [{'start': 0, 'end': 500, 'count': 12}],
+            'walls': [[2, 24, 30, 24]],
+        }
+        body.update(overrides)
+        return body
+
+    def state(self, project, emitter, time_ms):
+        return self.call('POST', self.base(project) + '/particles/state', {'emitter': emitter, 'time_ms': time_ms})
+
+    def test_particle_state_deterministic_under_scrub_reverse_fps(self):
+        project = self.new(64, 64)
+        emitter = self.emitter_body(spread=30, speed_max=140, windows=[{'start': 0, 'end': 400, 'count': 15}, {'start': 600, 'end': 900, 'count': 10}])
+        first = None
+        for t in [333, 100, 900, 0, 555, 333, 1200, 333]:
+            current = self.state(project, emitter, t)
+            if t == 333:
+                if first is None:
+                    first = current
+                self.assertEqual(current, first)
+        self.assertEqual(self.state(project, emitter, 333), first)
+        self.assertEqual(first['count'], len(first['particles']))
+        base = self.base(project)
+        options = {'emitter': emitter, 'show_source': False, 'show_walls': False}
+        a = self.call('POST', base + '/particles/preview', {**options, 'time_ms': 333})
+        self.call('POST', base + '/particles/preview', {**options, 'time_ms': 800})
+        self.call('POST', base + '/particles/preview', {**options, 'time_ms': 40})
+        b = self.call('POST', base + '/particles/preview', {**options, 'time_ms': 333})
+        self.assertEqual(a, b)
+
+    def test_particle_fast_particle_never_tunnels(self):
+        project = self.new(64, 64)
+        emitter = self.emitter_body(
+            origin=[4, 32], direction=0, speed_min=15000, speed_max=15000,
+            gravity_y=0, life_min=2000, life_max=2000,
+            windows=[{'start': 0, 'end': 0, 'count': 1}],
+            walls=[[20, 0, 20, 63]], restitution=1)
+        xs = [self.state(project, emitter, t)['particles'][0]['x'] for t in range(0, 200)]
+        self.assertLessEqual(max(xs), 20 + 1e-6)
+        self.assertLess(min(xs), 4)
+        vanishing = self.emitter_body(
+            origin=[4, 32], direction=0, speed_min=15000, speed_max=15000,
+            gravity_y=0, life_min=2000, life_max=2000, collision='vanish',
+            windows=[{'start': 0, 'end': 0, 'count': 1}], walls=[[20, 0, 20, 63]])
+        self.assertEqual(self.state(project, vanishing, 1)['count'], 1)
+        self.assertEqual(self.state(project, vanishing, 2)['count'], 0)
+        ghost = self.emitter_body(
+            origin=[4, 32], direction=0, speed_min=15000, speed_max=15000,
+            gravity_y=0, life_min=2000, life_max=2000, collision='none',
+            windows=[{'start': 0, 'end': 0, 'count': 1}], walls=[[20, 0, 20, 63]])
+        self.assertGreater(self.state(project, ghost, 2)['particles'][0]['x'], 20)
+
+    def test_particle_resting_on_wall_never_sinks(self):
+        project = self.new(64, 64)
+        emitter = self.emitter_body(
+            origin=[16, 4], speed_min=0, speed_max=0, gravity_y=300,
+            life_min=3000, life_max=3000, restitution=0, friction=1,
+            windows=[{'start': 0, 'end': 0, 'count': 1}], walls=[[2, 24, 30, 24]])
+        for t in range(500, 3000, 500):
+            y = self.state(project, emitter, t)['particles'][0]['y']
+            self.assertLessEqual(y, 24 + 1e-6)
+            self.assertGreater(y, 23)
+        sliding = self.emitter_body(
+            origin=[16, 4], speed_min=0, speed_max=0, gravity_y=300,
+            life_min=3000, life_max=3000, restitution=0, friction=0,
+            windows=[{'start': 0, 'end': 0, 'count': 1}], walls=[[2, 24, 30, 24]])
+        for t in range(500, 3000, 500):
+            self.assertLessEqual(self.state(project, sliding, t)['particles'][0]['y'], 24 + 1e-6)
+
+    def test_particle_simultaneous_events_deterministic(self):
+        project = self.new(64, 64)
+        timed = self.emitter_body(
+            origin=[16, 16], speed_min=0, speed_max=0, gravity_y=0,
+            life_min=500, life_max=500, windows=[{'start': 100, 'end': 100, 'count': 1}],
+            walls=[], collision='none')
+        self.assertEqual(self.state(project, timed, 99)['count'], 0)
+        self.assertEqual(self.state(project, timed, 100)['count'], 1)
+        self.assertEqual(self.state(project, timed, 599)['count'], 1)
+        self.assertEqual(self.state(project, timed, 600)['count'], 0)
+        edge = self.emitter_body(
+            origin=[16, 0], speed_min=100, speed_max=100, gravity_y=0,
+            life_min=500, life_max=500, windows=[{'start': 0, 'end': 0, 'count': 1}],
+            walls=[[0, 50, 63, 50]])
+        self.assertEqual(self.state(project, edge, 499)['count'], 1)
+        for _ in range(3):
+            self.assertEqual(self.state(project, edge, 500)['count'], 0)
+        vanishing = self.emitter_body(
+            origin=[16, 0], speed_min=100, speed_max=100, gravity_y=0,
+            life_min=500, life_max=500, collision='vanish',
+            windows=[{'start': 0, 'end': 0, 'count': 1}], walls=[[0, 49, 63, 49]])
+        self.assertEqual(self.state(project, vanishing, 489)['count'], 1)
+        self.assertEqual(self.state(project, vanishing, 491)['count'], 0)
+
+    def test_particle_generate_matches_preview_and_keeps_source(self):
+        project = self.paint(self.new(64, 64))
+        emitter = self.emitter_body(spread=20, speed_max=100)
+        result = self.call('POST', self.base(project) + '/particles/generate', {'emitter': emitter, 'fps': 20, 'mode': 'overlay'}, 201)
+        generated = result['project']
+        self.assertEqual(len(generated['frames']), 26)
+        self.assertEqual(generated['frames'][0]['layers'][-1]['name'], '粒子火花')
+        self.assertEqual(generated['particle_emitters'][0]['seed'], 42)
+        source = self.store.get(project['id'])
+        self.assertEqual(source['revision'], project['revision'])
+        self.assertEqual(len(source['frames']), 1)
+        for index in [0, 7, 25]:
+            preview_png = self.call('POST', self.base(project) + '/particles/preview', {'emitter': emitter, 'time_ms': index * 50, 'show_source': True, 'show_walls': False})
+            with Image.open(io.BytesIO(preview_png)) as decoded:
+                expected = np.asarray(decoded.convert('RGBA'))
+            actual = np.asarray(render_frame(self.store, generated, generated['frames'][index]['id']))
+            np.testing.assert_array_equal(actual, expected)
+        slow = self.call('POST', self.base(project) + '/particles/generate', {'emitter': emitter, 'fps': 10, 'mode': 'particles_only'}, 201)['project']
+        fast = self.call('POST', self.base(project) + '/particles/generate', {'emitter': emitter, 'fps': 20, 'mode': 'particles_only'}, 201)['project']
+        np.testing.assert_array_equal(
+            np.asarray(render_frame(self.store, slow, slow['frames'][3]['id'])),
+            np.asarray(render_frame(self.store, fast, fast['frames'][6]['id'])))
+
+    def test_particle_emitter_save_update_remove_undo_and_validation(self):
+        project = self.new(64, 64)
+        saved = self.mutate(project, 'particles/emitters', {'emitter': self.emitter_body()})
+        self.assertEqual(len(saved['particle_emitters']), 1)
+        emitter_id = saved['particle_emitters'][0]['id']
+        updated = self.mutate(saved, 'particles/emitters', {'emitter': self.emitter_body(seed=99), 'emitter_id': emitter_id})
+        self.assertEqual(len(updated['particle_emitters']), 1)
+        self.assertEqual(updated['particle_emitters'][0]['seed'], 99)
+        removed = self.mutate(updated, f'particles/emitters/{emitter_id}', {}, 'DELETE')
+        self.assertEqual(removed['particle_emitters'], [])
+        restored = self.mutate(removed, 'undo')
+        self.assertEqual(len(restored['particle_emitters']), 1)
+        before = restored['revision']
+        for bad in [
+            self.emitter_body(windows=[{'start': 0, 'end': 10, 'count': 401}]),
+            self.emitter_body(windows=[]),
+            self.emitter_body(walls=[[1, 1, 1, 1]]),
+            self.emitter_body(speed_min=200, speed_max=100),
+            self.emitter_body(collision='explode'),
+        ]:
+            response = self.client.post(self.base(restored) + '/particles/emitters', json={'revision': before, 'emitter': bad})
+            self.assertEqual(response.status_code, 400, response.json)
+        self.assertEqual(self.store.get(restored['id'])['revision'], before)
+
+    def test_particle_stats_summary(self):
+        project = self.new(64, 64)
+        stats = self.call('POST', self.base(project) + '/particles/stats', {'emitter': self.emitter_body()})
+        self.assertEqual(stats['particles'], 12)
+        self.assertEqual(stats['duration_ms'], 1300)
+        self.assertGreater(stats['bounces'], 0)
+        vanishing = self.call('POST', self.base(project) + '/particles/stats', {'emitter': self.emitter_body(collision='vanish')})
+        self.assertEqual(vanishing['vanished'], 12)
+        self.assertEqual(vanishing['bounces'], 0)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

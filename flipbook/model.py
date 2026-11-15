@@ -57,6 +57,7 @@ def new_project(name, width, height, asset):
         'palette': ['#142136ff', '#65e2b9ff', '#f8cc65ff', '#8c9bffff', '#fa87acff', '#ffffffff'],
         'background': '#00000000',
         'tilemaps': [],
+        'particle_emitters': [],
         'guides': {'grid': 8, 'safe_margin': 0},
         'undo': [],
         'redo': [],

@@ -301,3 +301,100 @@ async function openAtlasWorkspace(identifier){
   body.append(element('h3','另建图集工程'));
   body.append(form([text('name','工程名称','游戏图集'),num('width','图集宽',256,32,2048),num('height','图集高',256,32,2048),num('reserve','每侧原画预留像素',4,0,32),num('padding','图块间隔',1,0,16),num('extrude','边缘外扩',1,0,8),check('rotate','允许旋转')],'创建图集工程',async values=>{await mutate('建立图集工程…',endpoint('atlas-workspaces'),values);await openAtlasWorkspace(project().atlas_workspaces.at(-1).id)}));
 }
+
+Object.assign(names,{particles:'粒子数',duration_ms:'总时长 ms',bounces:'反弹次数',vanished:'提前消失',max_events:'单粒子最多碰撞',windows:'发射时段',walls:'碰撞线段'});
+$('particles').onclick=guard(openParticles);
+function defaultEmitter(){const w=project().width,h=project().height;return {name:'火花发射器',seed:42,origin:[Math.round(w/2),6],direction:90,spread:45,speed_min:60,speed_max:130,gravity_x:0,gravity_y:320,life_min:400,life_max:900,size:2,color_start:'#ffe9a3ff',color_end:'#ff5f3c00',collision:'bounce',restitution:.55,friction:.15,windows:[{start:0,end:600,count:24}],walls:[[Math.round(w*.08),Math.round(h*.82),Math.round(w*.92),Math.round(h*.7)]]}}
+async function openParticles(){
+  project();stopPlayback();
+  const body=dialog('二维粒子发射器');
+  body.append(element('p','火花在重力中下落，撞到画出的墙面后反弹或消失。同一种子与设置下，任意时刻的粒子状态完全确定：拖动时间、倒放预览或修改输出帧率，同一时刻画面相同；快速粒子也不会一步穿墙。发射器设置保存在项目中可反复调整；生成动画写入新项目，不改写当前动画。','hint'));
+  const layout=element('div',undefined,'dialog-grid'),controls=element('div'),right=element('div',undefined,'tool-output');
+  layout.append(controls,right);body.append(layout);
+  const stored=project().particle_emitters||[];
+  let E=stored.length?JSON.parse(JSON.stringify(stored[0])):defaultEmitter(),emitterId=stored.length?stored[0].id:null;
+  delete E.id;
+  let duration=1000,frameMs=80,frameIndex=0,playing=false,wallMode=false,wallStart=null,wallDraft=null,baseBitmap=null,inflight=false,queued=false,statsTimer=null;
+  const inputs={};
+  const savedSelect=element('select');savedSelect.setAttribute('aria-label','已保存的发射器');
+  const saveBtn=element('button','保存发射器'),removeBtn=element('button','删除已保存'),newBtn=element('button','新建');
+  const savedBar=element('div',undefined,'inline-actions');savedBar.append(savedSelect,newBtn,saveBtn,removeBtn);controls.append(savedBar);
+  function reloadSaved(){savedSelect.replaceChildren();const list=project().particle_emitters||[];if(!list.length)savedSelect.append(new Option('尚未保存',''));for(const item of list)savedSelect.append(new Option(item.name,item.id));if(emitterId&&list.some(e=>e.id===emitterId))savedSelect.value=emitterId}
+  function loadEmitter(id){const found=(project().particle_emitters||[]).find(e=>e.id===id);if(found){emitterId=found.id;E=JSON.parse(JSON.stringify(found));delete E.id}else{emitterId=null;E=defaultEmitter()}syncForm();renderWindows();renderWalls();scheduleRefresh()}
+  savedSelect.onchange=()=>loadEmitter(savedSelect.value||null);
+  newBtn.onclick=()=>{emitterId=null;E=defaultEmitter();syncForm();renderWindows();renderWalls();scheduleRefresh()};
+  saveBtn.onclick=guard(async()=>{const result=await mutate('保存粒子发射器…',endpoint('particles/emitters'),{emitter:E,emitter_id:emitterId||undefined});const list=result.particle_emitters||[];emitterId=emitterId&&list.some(e=>e.id===emitterId)?emitterId:(list.at(-1)?.id||null);reloadSaved();status('发射器设置已保存到项目，可撤销')});
+  removeBtn.onclick=guard(async()=>{if(!emitterId)throw Error('当前发射器尚未保存');await mutate('移除粒子发射器…',endpoint(`particles/emitters/${emitterId}`),{},'DELETE');emitterId=null;reloadSaved()});
+  function pnum(key,label,min,max){const f=field({name:key,label,type:'number',default:E[key],min,max});const i=f.querySelector('input');i.step='any';i.onchange=()=>{E[key]=Number(i.value);scheduleRefresh()};inputs[key]=i;return f}
+  function ptext(key,label){const f=field({name:key,label,type:'text',default:E[key]});const i=f.querySelector('input');i.onchange=()=>{E[key]=i.value;scheduleRefresh()};inputs[key]=i;return f}
+  function psel(key,label,choices){const f=field({name:key,label,type:'select',default:E[key],options:choices.map(c=>({value:c[0],label:c[1]}))});const i=f.querySelector('select');i.onchange=()=>{E[key]=i.value;scheduleRefresh()};inputs[key]=i;return f}
+  const grid=element('div',undefined,'form');
+  grid.append(ptext('name','发射器名称'),pnum('seed','随机种子',0,2147483647));
+  const originField=field({name:'origin',label:'发射位置 [x, y]',type:'array',default:E.origin}),originInput=originField.querySelector('input');
+  originInput.onchange=()=>{try{const parsed=JSON.parse(originInput.value);if(Array.isArray(parsed)&&parsed.length===2)E.origin=parsed.map(Number)}catch{}scheduleRefresh()};inputs.origin=originInput;
+  grid.append(originField,pnum('direction','发射方向°（0=右 90=下）',-360,360),pnum('spread','扩散角度°',0,360),pnum('speed_min','最小初速 px/秒',0,20000),pnum('speed_max','最大初速 px/秒',0,20000),pnum('gravity_x','水平重力 px/秒²',-4000,4000),pnum('gravity_y','垂直重力 px/秒²',-4000,4000),pnum('life_min','最短寿命 ms',20,60000),pnum('life_max','最长寿命 ms',20,60000),pnum('size','粒子尺寸 px',1,8),ptext('color_start','出生颜色 #RRGGBBAA'),ptext('color_end','消亡颜色 #RRGGBBAA'),psel('collision','碰撞处理',[['bounce','反弹'],['vanish','消失'],['none','穿过墙面']]),pnum('restitution','弹性系数 0–1',0,1),pnum('friction','切向阻尼 0–1',0,1));
+  controls.append(grid);
+  controls.append(element('h3','发射时段（开始 ms / 结束 ms / 粒子数）'));
+  const windowsBox=element('div');controls.append(windowsBox);
+  function renderWindows(){windowsBox.replaceChildren();E.windows.forEach((w,index)=>{const row=element('div',undefined,'particle-row');const s=element('input'),e=element('input'),c=element('input');s.type=e.type=c.type='number';s.min=e.min=0;c.min=1;s.value=w.start;e.value=w.end;c.value=w.count;s.title='开始 ms';e.title='结束 ms';c.title='粒子数';s.setAttribute('aria-label','时段开始');e.setAttribute('aria-label','时段结束');c.setAttribute('aria-label','时段粒子数');s.onchange=()=>{w.start=Number(s.value);scheduleRefresh()};e.onchange=()=>{w.end=Number(e.value);scheduleRefresh()};c.onchange=()=>{w.count=Math.max(1,Math.round(Number(c.value)||1));scheduleRefresh()};const del=element('button','✕');del.title='移除此时段';del.onclick=()=>{E.windows.splice(index,1);renderWindows();scheduleRefresh()};row.append(s,e,c,del);windowsBox.append(row)})}
+  const addWindow=element('button','＋ 添加发射时段');addWindow.onclick=()=>{const last=E.windows.at(-1);E.windows.push({start:last?last.end:0,end:(last?last.end:0)+500,count:12});renderWindows();scheduleRefresh()};
+  controls.append(addWindow);
+  controls.append(element('h3','碰撞线段（在右侧预览上画墙）'));
+  const wallToggle=element('button','画墙模式：关');wallToggle.onclick=()=>{wallMode=!wallMode;wallToggle.textContent='画墙模式：'+(wallMode?'开（在预览上拖动）':'关');wallToggle.classList.toggle('primary',wallMode)};
+  const clearWalls=element('button','清空墙面');clearWalls.onclick=()=>{E.walls=[];renderWalls();scheduleRefresh()};
+  const wallBar=element('div',undefined,'inline-actions');wallBar.append(wallToggle,clearWalls);controls.append(wallBar);
+  const wallsBox=element('div');controls.append(wallsBox);
+  function renderWalls(){wallsBox.replaceChildren();E.walls.forEach((w,index)=>{const row=element('div',undefined,'particle-row');row.append(element('small',`(${w[0]}, ${w[1]}) → (${w[2]}, ${w[3]})`));const del=element('button','✕');del.title='移除此线段';del.onclick=()=>{E.walls.splice(index,1);renderWalls();scheduleRefresh()};row.append(del);wallsBox.append(row)});if(!E.walls.length)wallsBox.append(element('p','暂无墙面，粒子只受重力影响。','muted'))}
+  const canvas=element('canvas');canvas.id='particleCanvas';canvas.width=project().width;canvas.height=project().height;
+  const zoom=project().width<=128?6:project().width<=512?3:1;canvas.style.width=project().width*zoom+'px';canvas.style.height=project().height*zoom+'px';
+  const view=element('div',undefined,'map-viewport');view.append(canvas);
+  const ctx=canvas.getContext('2d');
+  const playBtn=element('button','▶ 播放','primary');
+  const reverseLabel=element('label',' 倒放','check'),reverseBox=element('input');reverseBox.type='checkbox';reverseLabel.prepend(reverseBox);
+  const fpsSelect=element('select');fpsSelect.setAttribute('aria-label','预览帧率');for(const f of [6,12,24,30,50])fpsSelect.append(new Option(f+' fps',f));fpsSelect.value='12';
+  const timeLabel=element('span','0 ms','muted');
+  const slider=element('input');slider.type='range';slider.min=0;slider.max=1000;slider.step=frameMs;slider.value=0;slider.setAttribute('aria-label','预览时间');
+  const sourceLabel=element('label',' 叠加原动画','check'),sourceBox=element('input');sourceBox.type='checkbox';sourceBox.checked=true;sourceLabel.prepend(sourceBox);
+  const transport=element('div',undefined,'particle-transport');transport.append(playBtn,reverseLabel,fpsSelect,sourceLabel,timeLabel);
+  right.append(transport,slider,view);
+  const statsLine=element('p','','particle-stats');right.append(statsLine);
+  function maxFrame(){return Math.max(0,Math.ceil(duration/frameMs)-1)}
+  function syncTime(){if(frameIndex>maxFrame())frameIndex=maxFrame();slider.max=duration;slider.step=frameMs;slider.value=frameIndex*frameMs;timeLabel.textContent=`${frameIndex*frameMs} ms · 第 ${frameIndex+1} 帧`}
+  function stop(){if(playing){playing=false;playBtn.textContent='▶ 播放';if(mapTimer){clearInterval(mapTimer);mapTimer=null}}}
+  playBtn.onclick=()=>{if(playing){stop();return}playing=true;playBtn.textContent='Ⅱ 暂停';mapTimer=setInterval(()=>{frameIndex+=reverseBox.checked?-1:1;if(frameIndex>maxFrame())frameIndex=0;if(frameIndex<0)frameIndex=maxFrame();syncTime();refreshPreview()},frameMs)};
+  fpsSelect.onchange=()=>{const at=frameIndex*frameMs;frameMs=Math.max(20,Math.round(1000/Number(fpsSelect.value)));frameIndex=Math.round(at/frameMs);if(playing){stop();playBtn.onclick()}syncTime();refreshPreview()};
+  slider.oninput=()=>{frameIndex=Math.round(Number(slider.value)/frameMs);syncTime();refreshPreview()};
+  sourceBox.onchange=()=>refreshPreview();
+  async function refreshPreview(){
+    if(inflight){queued=true;return}
+    inflight=true;
+    try{
+      const blob=await post(endpoint('particles/preview'),{emitter:E,time_ms:frameIndex*frameMs,show_source:sourceBox.checked,show_walls:true});
+      if(baseBitmap)baseBitmap.close();
+      baseBitmap=await createImageBitmap(blob);
+      drawScene();
+    }catch(error){status(error.message,true)}finally{inflight=false;if(queued){queued=false;refreshPreview()}}
+  }
+  function drawScene(){
+    ctx.imageSmoothingEnabled=false;ctx.clearRect(0,0,canvas.width,canvas.height);
+    if(baseBitmap)ctx.drawImage(baseBitmap,0,0);
+    const[ox,oy]=E.origin;ctx.strokeStyle='#7df0cd';ctx.lineWidth=1/zoom;ctx.beginPath();ctx.moveTo(ox-2,oy);ctx.lineTo(ox+2,oy);ctx.moveTo(ox,oy-2);ctx.lineTo(ox,oy+2);ctx.stroke();
+    if(wallDraft){ctx.strokeStyle='#ffd7dc';ctx.lineWidth=1/zoom;ctx.beginPath();ctx.moveTo(wallDraft[0],wallDraft[1]);ctx.lineTo(wallDraft[2],wallDraft[3]);ctx.stroke()}
+  }
+  function canvasPos(e){const rect=canvas.getBoundingClientRect();return [(e.clientX-rect.left)/rect.width*project().width,(e.clientY-rect.top)/rect.height*project().height]}
+  canvas.onpointerdown=e=>{if(!wallMode)return;e.preventDefault();wallStart=canvasPos(e);canvas.setPointerCapture(e.pointerId)};
+  canvas.onpointermove=e=>{if(!wallStart)return;const p=canvasPos(e);wallDraft=[wallStart[0],wallStart[1],p[0],p[1]];drawScene()};
+  canvas.onpointerup=e=>{if(!wallStart)return;const p=canvasPos(e);const wall=[wallStart[0],wallStart[1],p[0],p[1]].map(n=>Math.round(n*100)/100);wallStart=null;wallDraft=null;if(Math.hypot(wall[2]-wall[0],wall[3]-wall[1])>=.5){E.walls.push(wall);renderWalls();scheduleRefresh()}else drawScene()};
+  canvas.onpointercancel=()=>{wallStart=null;wallDraft=null;drawScene()};
+  function scheduleRefresh(){clearTimeout(statsTimer);statsTimer=setTimeout(async()=>{try{const s=await post(endpoint('particles/stats'),{emitter:E});duration=s.duration_ms;statsLine.textContent=`粒子 ${s.particles} 个 · 总时长 ${s.duration_ms} ms · 反弹 ${s.bounces} 次 · 提前消失 ${s.vanished} 个`;syncTime();refreshPreview()}catch(error){statsLine.textContent=error.message}},250)}
+  function syncForm(){for(const key of Object.keys(inputs))inputs[key].value=key==='origin'?JSON.stringify(E[key]):E[key]}
+  const output=element('div');right.append(element('h3','生成为新动画项目'),output);
+  right.append(form([num('fps','输出帧率',12,1,50),select('mode','生成模式','overlay',[['overlay','叠加在原动画上'],['particles_only','仅粒子（透明背景）']]),num('duration_ms','总时长 ms（0 为自动）',0,0,60000)],'生成新项目（不改写当前动画）',async data=>{
+    const payload={emitter:E,fps:data.fps,mode:data.mode};if(data.duration_ms)payload.duration_ms=data.duration_ms;
+    const result=await work('生成粒子动画…',()=>post(endpoint('particles/generate'),payload));
+    output.replaceChildren();renderData(result.particles,output);
+    const open=element('button','打开生成的新项目');open.onclick=guard(async()=>{S.frame=S.layer=null;await acceptProject(result.project);$('dialog').close()});
+    output.append(element('p','原动画未被修改；新项目包含粒子图层与发射器设置。','hint'),open);await refreshListOnly();
+  }));
+  reloadSaved();syncForm();renderWindows();renderWalls();syncTime();scheduleRefresh();
+}

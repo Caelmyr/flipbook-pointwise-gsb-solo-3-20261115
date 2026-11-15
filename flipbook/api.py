@@ -598,6 +598,49 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
         with store.lock:
             return download(tiled_bundle(store, tilemaps, store.get(key), map_id), 'tilemap.zip', 'application/zip')
 
+    @api.post('/projects/<key>/particles/emitters')
+    def particle_emitter_save(key):
+        from . import particles
+        data = body()
+        return jsonify(particles.save_emitter(store, key, v.revision(data), data))
+
+    @api.delete('/projects/<key>/particles/emitters/<emitter_id>')
+    def particle_emitter_remove(key, emitter_id):
+        from . import particles
+        data = body()
+        return jsonify(particles.remove_emitter(store, key, v.revision(data), emitter_id))
+
+    @api.post('/projects/<key>/particles/preview')
+    def particle_preview(key):
+        from . import particles
+        with store.lock:
+            image, _ = particles.preview_image(store, store.get(key), body())
+            return image_response(image)
+
+    @api.post('/projects/<key>/particles/state')
+    def particle_state(key):
+        from . import particles
+        data = body()
+        with store.lock:
+            project = store.get(key)
+            config = particles.validate_emitter(data.get('emitter'), project['width'], project['height'])
+            time_ms = v.real(data.get('time_ms', 0), '查询时间', 0, 3600000)
+            return jsonify(particles.state_response(config, time_ms))
+
+    @api.post('/projects/<key>/particles/stats')
+    def particle_stats(key):
+        from . import particles
+        data = body()
+        with store.lock:
+            project = store.get(key)
+            config = particles.validate_emitter(data.get('emitter'), project['width'], project['height'])
+            return jsonify(particles.summary(config))
+
+    @api.post('/projects/<key>/particles/generate')
+    def particle_generate(key):
+        from . import particles
+        return jsonify(particles.generate(store, key, body())), 201
+
     @api.post('/projects/<key>/matte')
     def matte(key):
         from .matting import matte_layers

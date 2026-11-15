@@ -18,6 +18,13 @@ test_mirror_drawing_and_erase (test_workflows.Workflows.test_mirror_drawing_and_
 test_named_versions_restore_fork_compare (test_workflows.Workflows.test_named_versions_restore_fork_compare) ... ok
 test_ninepatch_preserves_corners (test_workflows.Workflows.test_ninepatch_preserves_corners) ... ok
 test_palette_extraction_and_mapping (test_workflows.Workflows.test_palette_extraction_and_mapping) ... ok
+test_particle_emitter_save_update_remove_undo_and_validation (test_workflows.Workflows.test_particle_emitter_save_update_remove_undo_and_validation) ... ok
+test_particle_fast_particle_never_tunnels (test_workflows.Workflows.test_particle_fast_particle_never_tunnels) ... ok
+test_particle_generate_matches_preview_and_keeps_source (test_workflows.Workflows.test_particle_generate_matches_preview_and_keeps_source) ... ok
+test_particle_resting_on_wall_never_sinks (test_workflows.Workflows.test_particle_resting_on_wall_never_sinks) ... ok
+test_particle_simultaneous_events_deterministic (test_workflows.Workflows.test_particle_simultaneous_events_deterministic) ... ok
+test_particle_state_deterministic_under_scrub_reverse_fps (test_workflows.Workflows.test_particle_state_deterministic_under_scrub_reverse_fps) ... ok
+test_particle_stats_summary (test_workflows.Workflows.test_particle_stats_summary) ... ok
 test_pencil_draw_and_undo_redo (test_workflows.Workflows.test_pencil_draw_and_undo_redo) ... ok
 test_pingpong_does_not_duplicate_endpoints (test_workflows.Workflows.test_pingpong_does_not_duplicate_endpoints) ... ok
 test_pipeline_atomic_rollback (test_workflows.Workflows.test_pipeline_atomic_rollback) ... ok
@@ -31,6 +38,6 @@ test_time_resample_total_preserved (test_workflows.Workflows.test_time_resample_
 test_transform_tween_end_state (test_workflows.Workflows.test_transform_tween_end_state) ... ok
 
 ----------------------------------------------------------------------
-Ran 31 tests in 1.112s
+Ran 38 tests in 1.337s
 
 OK
