@@ -103,13 +103,14 @@ def mirrored_paths(points, width, height, mirror_x, mirror_y):
     return unique
 
 
-def draw_shape(image, command, points):
+def shape_mask(size, command, points):
+    """Build the coverage mask (L image) that the command paints with."""
     mode = command['tool']
-    mask = Image.new('L', image.size, 0)
+    mask = Image.new('L', size, 0)
     draw = ImageDraw.Draw(mask)
     width = command['size']
     if mode in ('pencil', 'erase', 'line'):
-        mask = stroke_mask(image.size, points if mode != 'line' else [points[0], points[-1]], width)
+        mask = stroke_mask(size, points if mode != 'line' else [points[0], points[-1]], width)
     elif mode in ('rectangle', 'ellipse'):
         first, last = points[0], points[-1]
         box = (min(first[0], last[0]), min(first[1], last[1]), max(first[0], last[0]), max(first[1], last[1]))
@@ -123,9 +124,18 @@ def draw_shape(image, command, points):
     elif mode == 'text':
         draw.text(tuple(points[0]), command['text'], fill=255, font=font(command['font_size']))
     elif mode == 'fill':
-        mask = flood_mask(image, points[0], command['tolerance'], command['contiguous'])
-    elif mode == 'gradient':
+        mask = flood_mask(Image.new('RGBA', size), points[0], command['tolerance'], command['contiguous'])
+    return mask
+
+
+def draw_shape(image, command, points):
+    mode = command['tool']
+    if mode == 'gradient':
         return Image.alpha_composite(image, gradient_image(image.size, points[0], points[-1], command['color'], command['secondary']))
+    if mode == 'fill':
+        mask = flood_mask(image, points[0], command['tolerance'], command['contiguous'])
+    else:
+        mask = shape_mask(image.size, command, points)
     if mode == 'erase':
         return erase_pixels(image, mask)
     return apply_paint(image, mask, command['color'])

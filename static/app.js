@@ -266,7 +266,7 @@ async function openRoleTools(){
 $('celTools').onclick=guard(openCelTools);
 async function openCelTools(){
   const p=project(),source=currentLayer(),frame=currentFrame(),body=dialog('共用原画与独立实例');
-  body.append(element('p','共用原画只共享像素，位置、旋转、缩放、透明度和显示仍由各实例保留。铅笔、橡皮与线条形状可直接在变换后的实例画布绘制；一笔可整体撤销。其他像素处理可先脱离，烘焙也只脱离当前实例。','hint'));
+  body.append(element('p','共用原画只共享像素，位置、旋转、缩放、透明度、混合和显示仍由各实例独立保留。在带变换的实例上直接绘制时，笔迹会按该实例的显示映射写回共享原画像素，不会改动任何实例的变换；同一源像素覆盖的可见位置点选含义一致，缩小实例上可见的像素也不会漏画。支持铅笔、橡皮与线条形状，一笔可整体撤销；其他像素处理可先脱离，烘焙也只脱离当前实例。','hint'));
   if(source.cel_id){
     const linked=p.frames.flatMap(f=>f.layers.filter(l=>l.cel_id===source.cel_id).map(l=>({frame:f.name,layer:l.name,transform:l.transform})));
     body.append(element('h3','当前共用原画：'+linked.length+' 个实例'));renderData(linked,body);
