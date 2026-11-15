@@ -120,7 +120,7 @@ def public_summary(project):
     }
 
 
-def validate_structure(project):
+def validate_structure(project, store=None):
     if 'ink_roles' in project:
         from .role_tools import validate_entries
         validate_entries(project['ink_roles'])
@@ -162,4 +162,7 @@ def validate_structure(project):
     validate_cels(project)
     from .contracts import validate_document
     validate_document(project)
+    if store is not None:
+        from .role_tools import validate_role_layers
+        validate_role_layers(store, project)
     return project

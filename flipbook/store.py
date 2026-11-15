@@ -119,7 +119,7 @@ class Store:
                 raise v.Conflict('项目已被其他操作修改，请刷新后重试')
             project = deepcopy(original)
             yield project
-            validate_structure(project)
+            validate_structure(project, self)
             history_id = new_id()
             entry = {
                 'id': history_id,
@@ -220,7 +220,7 @@ class Store:
     def asset_inventory(self, project_id):
         project = self.get(project_id)
         active = {asset for frame in project['frames'] for layer in walk_layers(frame['layers'])
-                  for asset in [layer['asset'], layer.get('role_legacy_asset')] if asset}
+                  for asset in [layer['asset'], layer.get('role_legacy_asset'), layer.get('role_map_asset')] if asset}
         from .atlas_workspaces import asset_sizes
         active.update(asset_sizes(project))
         all_assets = list((self.directory(project_id) / 'assets').glob('*.png'))

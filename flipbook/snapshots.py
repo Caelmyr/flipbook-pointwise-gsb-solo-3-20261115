@@ -66,7 +66,7 @@ class Snapshots:
         with self.store.edit(project_id, revision, '恢复命名版本') as project:
             snapshot = self.get(project_id, snapshot_id)
             restored = deepcopy(snapshot['project'])
-            validate_structure(restored)
+            validate_structure(restored, self.store)
             for key, value in restored.items():
                 if key not in ('id', 'revision', 'undo', 'redo', 'created_at', 'updated_at'):
                     project[key] = value
@@ -88,6 +88,9 @@ class Snapshots:
                         if layer.get('role_legacy_asset'):
                             fallback = self.store.image(project_id, layer['role_legacy_asset'])
                             layer['role_legacy_asset'] = self.store.put_image(created['id'], fallback)
+                        if layer.get('role_map_asset'):
+                            role_map = self.store.image(project_id, layer['role_map_asset'])
+                            layer['role_map_asset'] = self.store.put_image(created['id'], role_map)
                 from .atlas_workspaces import workspaces
                 for workspace in workspaces(project):
                     for version in workspace['versions']:

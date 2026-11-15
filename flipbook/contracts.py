@@ -94,7 +94,7 @@ def check_assets(store, project):
     wrong_size = []
     checked = set()
     assets = {asset for frame in project['frames'] for layer in walk_layers(frame['layers'])
-              for asset in [layer['asset'], layer.get('role_legacy_asset')] if asset}
+              for asset in [layer['asset'], layer.get('role_legacy_asset'), layer.get('role_map_asset')] if asset}
     from .atlas_workspaces import asset_sizes
     page_sizes = asset_sizes(project)
     assets.update(page_sizes)

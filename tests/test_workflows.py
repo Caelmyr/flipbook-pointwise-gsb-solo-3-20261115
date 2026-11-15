@@ -371,5 +371,196 @@ class Workflows(unittest.TestCase):
             another.extensions['jobs'].executor.shutdown(wait=True)
 
 
+class RoleInk(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.app = create_app(cls.temp.name)
+        cls.app.testing = True
+        cls.client = cls.app.test_client()
+        cls.store = cls.app.extensions['store']
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.extensions['jobs'].executor.shutdown(wait=True)
+        cls.temp.cleanup()
+
+    def call(self, method, path, data=None, expected=200):
+        response = self.client.open(path, method=method, json=data)
+        self.assertEqual(response.status_code, expected, response.json if response.is_json else response.data[:200])
+        result = response.json if response.is_json else response.data
+        response.close()
+        return result
+
+    def new(self):
+        return self.call('POST', '/api/projects', {'name': '角色色', 'width': 16, 'height': 16}, 201)
+
+    def base(self, project):
+        return '/api/projects/' + project['id']
+
+    def mutate(self, project, path, data=None, method='POST'):
+        payload = {'revision': project['revision']}
+        payload.update(data or {})
+        return self.call(method, self.base(project) + '/' + path, payload)
+
+    def layer_path(self, project, suffix=''):
+        frame = project['frames'][0]
+        return 'frames/' + frame['id'] + '/layers/' + frame['layers'][0]['id'] + ('/' + suffix if suffix else '')
+
+    def layer(self, project):
+        return project['frames'][0]['layers'][0]
+
+    def pixels(self, project):
+        return np.asarray(self.store.image(project['id'], self.layer(project)['asset']))
+
+    def role_map(self, project):
+        return np.asarray(self.store.image(project['id'], self.layer(project)['role_map_asset']).convert('L'))
+
+    def enable(self, project):
+        return self.mutate(project, self.layer_path(project, 'ink/enable'))
+
+    def paint(self, project, role_id, x, color='#b43c3cff'):
+        return self.mutate(project, self.layer_path(project, 'draw'), {
+            'tool': 'pencil', 'color': color, 'points': [[x, x]], 'size': 1,
+            'role_id': role_id, 'ink_alpha': 255,
+        })
+
+    def test_same_appearance_keeps_independent_roles_on_recolor(self):
+        project = self.new()
+        project = self.enable(project)
+        # 两个独立角色暂时调成同一种颜色（默认外衣11与阴影27本来就同色）。
+        project = self.paint(project, 11, 2)
+        project = self.paint(project, 27, 8)
+        before = self.pixels(project)
+        self.assertEqual(tuple(before[2, 2, :3]), tuple(before[8, 8, :3]))
+        role_map = self.role_map(project)
+        self.assertEqual(role_map[2, 2], 11)
+        self.assertEqual(role_map[8, 8], 27)
+        # 只改外衣颜色，阴影像素必须保持原样。
+        roles = [{'id': 11, 'name': '外衣', 'rgb': [10, 128, 200]},
+                 {'id': 27, 'name': '阴影', 'rgb': [180, 60, 60]}]
+        project = self.mutate(project, 'ink-roles', {'roles': roles})
+        after = self.pixels(project)
+        self.assertEqual(tuple(after[2, 2, :3]), (10, 128, 200))
+        self.assertEqual(tuple(after[8, 8, :3]), (180, 60, 60))
+        # 归属图未按颜色重算，两个角色仍然分开。
+        role_map = self.role_map(project)
+        self.assertEqual(role_map[2, 2], 11)
+        self.assertEqual(role_map[8, 8], 27)
+
+    def test_slot_reorder_and_rename_follow_stable_identity(self):
+        project = self.new()
+        project = self.enable(project)
+        project = self.paint(project, 11, 1)
+        project = self.paint(project, 27, 9)
+        # 交换色槽顺序并改名，编号不变，归属与颜色必须跟随各自编号。
+        roles = [{'id': 27, 'name': '皮肤', 'rgb': [240, 200, 160]},
+                 {'id': 11, 'name': '衣服', 'rgb': [30, 30, 180]}]
+        project = self.mutate(project, 'ink-roles', {'roles': roles})
+        pixels = self.pixels(project)
+        self.assertEqual(tuple(pixels[1, 1, :3]), (30, 30, 180))
+        self.assertEqual(tuple(pixels[9, 9, :3]), (240, 200, 160))
+        role_map = self.role_map(project)
+        self.assertEqual(role_map[1, 1], 11)
+        self.assertEqual(role_map[9, 9], 27)
+        status = self.call('GET', self.base(project) + '/ink-roles/status')
+        self.assertEqual([role['id'] for role in status['roles']], [27, 11])
+
+    def test_undo_redo_restore_attribution_and_color(self):
+        project = self.new()
+        project = self.enable(project)
+        project = self.paint(project, 11, 3)
+        project = self.paint(project, 27, 11)
+        roles = [{'id': 11, 'name': '外衣', 'rgb': [1, 2, 3]},
+                 {'id': 27, 'name': '阴影', 'rgb': [180, 60, 60]}]
+        project = self.mutate(project, 'ink-roles', {'roles': roles})
+        self.assertEqual(tuple(self.pixels(project)[3, 3, :3]), (1, 2, 3))
+        project = self.mutate(project, 'undo')
+        self.assertEqual(tuple(self.pixels(project)[3, 3, :3]), (180, 60, 60))
+        self.assertEqual(self.role_map(project)[3, 3], 11)
+        project = self.mutate(project, 'redo')
+        self.assertEqual(tuple(self.pixels(project)[3, 3, :3]), (1, 2, 3))
+        self.assertEqual(self.role_map(project)[3, 3], 11)
+        self.assertEqual(self.role_map(project)[11, 11], 27)
+
+    def test_persistence_across_reload(self):
+        project = self.new()
+        project = self.enable(project)
+        project = self.paint(project, 11, 4)
+        project = self.paint(project, 27, 12)
+        map_asset = self.layer(project)['role_map_asset']
+        reloaded = create_app(self.temp.name)
+        try:
+            fresh = reloaded.extensions['store'].get(project['id'])
+            layer = fresh['frames'][0]['layers'][0]
+            self.assertEqual(layer['role_map_asset'], map_asset)
+            role_map = np.asarray(reloaded.extensions['store'].image(fresh['id'], map_asset).convert('L'))
+            self.assertEqual(role_map[4, 4], 11)
+            self.assertEqual(role_map[12, 12], 27)
+        finally:
+            reloaded.extensions['jobs'].executor.shutdown(wait=True)
+
+    def test_bundle_roundtrip_keeps_attribution_without_color_guessing(self):
+        project = self.new()
+        project = self.enable(project)
+        # 同色的两个角色，导入后绝不能按当前颜色合并。
+        project = self.paint(project, 11, 5, '#010203ff')
+        project = self.paint(project, 27, 13, '#010203ff')
+        self.assertEqual(tuple(self.pixels(project)[5, 5, :3]), tuple(self.pixels(project)[13, 13, :3]))
+        bundle = project_bundle(self.store, project)
+        response = self.client.post('/api/import-bundle', data={'file': (io.BytesIO(bundle), 'role.zip')})
+        self.assertEqual(response.status_code, 201, response.json)
+        imported = response.json
+        layer = imported['frames'][0]['layers'][0]
+        self.assertTrue(layer.get('role_encoding'))
+        self.assertIn('role_map_asset', layer)
+        role_map = np.asarray(self.store.image(imported['id'], layer['role_map_asset']).convert('L'))
+        self.assertEqual(role_map[5, 5], 11)
+        self.assertEqual(role_map[13, 13], 27)
+        # 导入后单独改外衣，阴影仍独立。
+        roles = [{'id': 11, 'name': '外衣', 'rgb': [9, 9, 9]},
+                 {'id': 27, 'name': '阴影', 'rgb': [180, 60, 60]}]
+        imported = self.call('POST', self.base(imported) + '/ink-roles',
+                             {'revision': imported['revision'], 'roles': roles})
+        pixels = np.asarray(self.store.image(imported['id'], imported['frames'][0]['layers'][0]['asset']))
+        self.assertEqual(tuple(pixels[5, 5, :3]), (9, 9, 9))
+        self.assertEqual(tuple(pixels[13, 13, :3]), (180, 60, 60))
+
+    def test_assign_region_and_erase_preserve_roles(self):
+        project = self.new()
+        project = self.enable(project)
+        project = self.mutate(project, self.layer_path(project, 'ink/assign'), {
+            'type': 'rectangle', 'x': 0, 'y': 0, 'width': 4, 'height': 1, 'role_id': 27,
+        })
+        role_map = self.role_map(project)
+        self.assertTrue(np.all(role_map[0, 0:4] == 27))
+        project = self.mutate(project, self.layer_path(project, 'draw'), {
+            'tool': 'erase', 'points': [[0, 0]], 'size': 1,
+        })
+        role_map = self.role_map(project)
+        self.assertEqual(role_map[0, 0], 0)
+        self.assertEqual(role_map[0, 1], 27)
+
+    def test_removed_role_frees_pixels_without_touching_others(self):
+        project = self.new()
+        project = self.enable(project)
+        project = self.paint(project, 11, 6)
+        project = self.paint(project, 27, 14)
+        roles = [{'id': 11, 'name': '外衣', 'rgb': [7, 7, 7]}]
+        project = self.mutate(project, 'ink-roles', {'roles': roles})
+        pixels = self.pixels(project)
+        self.assertEqual(tuple(pixels[6, 6, :3]), (7, 7, 7))
+        # 被删角色的像素保留删除前外观，并解除归属，不会被并入剩余角色。
+        self.assertEqual(tuple(pixels[14, 14, :3]), (180, 60, 60))
+        role_map = self.role_map(project)
+        self.assertEqual(role_map[6, 6], 11)
+        self.assertEqual(role_map[14, 14], 0)
+        roles = [{'id': 11, 'name': '外衣', 'rgb': [200, 200, 200]}]
+        project = self.mutate(project, 'ink-roles', {'roles': roles})
+        pixels = self.pixels(project)
+        self.assertEqual(tuple(pixels[6, 6, :3]), (200, 200, 200))
+        self.assertEqual(tuple(pixels[14, 14, :3]), (180, 60, 60))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

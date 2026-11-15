@@ -139,6 +139,36 @@ def draw(image, command):
     return result
 
 
+def command_mask(image, command):
+    """笔画实际落墨的像素蒙版：用于让归属跟随笔迹而非颜色变化。"""
+    mask = Image.new('L', image.size, 0)
+    paths = mirrored_paths(command['points'], image.width, image.height, command['mirror_x'], command['mirror_y'])
+    mode = command['tool']
+    for path in paths:
+        if mode in ('pencil', 'line'):
+            piece = stroke_mask(image.size, path if mode != 'line' else [path[0], path[-1]], command['size'])
+        elif mode in ('rectangle', 'ellipse'):
+            painter = ImageDraw.Draw(mask)
+            first, last = path[0], path[-1]
+            box = (min(first[0], last[0]), min(first[1], last[1]), max(first[0], last[0]), max(first[1], last[1]))
+            if command['filled']:
+                painter.rectangle(box, fill=255) if mode == 'rectangle' else painter.ellipse(box, fill=255)
+            else:
+                painter.rectangle(box, outline=255, width=command['size']) if mode == 'rectangle' else painter.ellipse(box, outline=255, width=command['size'])
+        elif mode == 'polygon':
+            ImageDraw.Draw(mask).polygon([tuple(p) for p in path],
+                                         fill=255 if command['filled'] else None, outline=255, width=command['size'])
+        elif mode == 'text':
+            ImageDraw.Draw(mask).text(tuple(path[0]), command['text'], fill=255, font=font(command['font_size']))
+        elif mode == 'fill':
+            piece = flood_mask(image, path[0], command['tolerance'], command['contiguous'])
+        else:
+            continue
+        if mode in ('pencil', 'line', 'fill'):
+            mask = Image.fromarray(np.maximum(np.asarray(mask), np.asarray(piece)))
+    return mask
+
+
 def selection_mask(size, body):
     mask = Image.new('L', size, 0)
     painter = ImageDraw.Draw(mask)

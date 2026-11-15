@@ -165,7 +165,7 @@ def import_project_bundle(store, stream):
             raise v.Invalid('项目JSON无效') from error
         validate_structure(original)
         assets = {asset for frame in original['frames'] for layer in walk_layers(frame['layers'])
-                  for asset in [layer['asset'], layer.get('role_legacy_asset')] if asset}
+                  for asset in [layer['asset'], layer.get('role_legacy_asset'), layer.get('role_map_asset')] if asset}
         from .atlas_workspaces import asset_sizes, workspaces
         page_sizes = asset_sizes(original)
         assets.update(page_sizes)
@@ -191,6 +191,8 @@ def import_project_bundle(store, stream):
                     layer['asset'] = mapping[layer['asset']]
                     if layer.get('role_legacy_asset'):
                         layer['role_legacy_asset'] = mapping[layer['role_legacy_asset']]
+                    if layer.get('role_map_asset'):
+                        layer['role_map_asset'] = mapping[layer['role_map_asset']]
             for workspace in workspaces(project):
                 for version in workspace['versions']:
                     version['page_asset'] = mapping[version['page_asset']]
