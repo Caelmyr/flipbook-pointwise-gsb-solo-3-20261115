@@ -749,4 +749,26 @@ def create_api(store, layers, timeline, tween, palettes, tilemaps, jobs, recipes
         return send_file(io.BytesIO(payload), mimetype='application/zip', as_attachment=True,
                          download_name=f'atlas-version-{number}.zip')
 
+    @api.get('/projects/<key>/atlas-workspaces/<identifier>/compare')
+    def atlas_workspace_compare(key, identifier):
+        from .atlas_workspaces import compare
+        first = v.integer(request.args.get('first'), '对比起始版本', 1, 10000)
+        second = v.integer(request.args.get('second'), '对比结束版本', 1, 10000)
+        with store.lock:
+            image, report = compare(store, key, identifier, first, second)
+        if request.args.get('image') == 'true':
+            return image_response(image)
+        return jsonify(report)
+
+    @api.get('/projects/<key>/atlas-workspaces/<identifier>/versions/<int:number>/entries')
+    def atlas_workspace_entries(key, identifier, number):
+        from .atlas_workspaces import find
+        project = store.get(key)
+        workspace = find(project, identifier)
+        version = next((item for item in workspace['versions'] if item['number'] == number), None)
+        if version is None:
+            raise v.Invalid('图集版本不存在')
+        return jsonify({'number': version['number'], 'source_revision': version['source_revision'],
+                        'page_sha256': version.get('page_sha256'), 'entries': version['entries']})
+
     return api

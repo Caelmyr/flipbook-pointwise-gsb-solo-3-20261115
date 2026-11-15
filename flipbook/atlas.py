@@ -50,6 +50,16 @@ class MaxRects:
         self.used.append(candidate)
         return candidate, rotated
 
+    def reserve(self, rectangle):
+        if rectangle.x < 0 or rectangle.y < 0 or rectangle.x + rectangle.width > self.width or rectangle.y + rectangle.height > self.height:
+            return False
+        if any(rectangle.intersects(used) for used in self.used):
+            return False
+        self.split(rectangle)
+        self.prune()
+        self.used.append(Rectangle(rectangle.x, rectangle.y, rectangle.width, rectangle.height))
+        return True
+
     def split(self, used):
         next_free = []
         for free in self.free:

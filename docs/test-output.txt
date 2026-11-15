@@ -5,6 +5,7 @@ test_app_reload_persistence (test_workflows.Workflows.test_app_reload_persistenc
 test_archive_rejects_traversal_and_missing_assets (test_workflows.Workflows.test_archive_rejects_traversal_and_missing_assets) ... ok
 test_atlas_pixel_roundtrip_and_no_overlaps (test_workflows.Workflows.test_atlas_pixel_roundtrip_and_no_overlaps) ... ok
 test_auto_sprite_slice (test_workflows.Workflows.test_auto_sprite_slice) ... ok
+test_compare_reports_identical_releases_and_independent_downloads (test_workflows.Workflows.test_compare_reports_identical_releases_and_independent_downloads) ... ok
 test_crossfade_preserves_unassociated_color (test_workflows.Workflows.test_crossfade_preserves_unassociated_color) ... ok
 test_export_jobs_all_formats (test_workflows.Workflows.test_export_jobs_all_formats) ... ok
 test_flood_fill_stays_inside_shape (test_workflows.Workflows.test_flood_fill_stays_inside_shape) ... ok
@@ -20,8 +21,11 @@ test_ninepatch_preserves_corners (test_workflows.Workflows.test_ninepatch_preser
 test_palette_extraction_and_mapping (test_workflows.Workflows.test_palette_extraction_and_mapping) ... ok
 test_pencil_draw_and_undo_redo (test_workflows.Workflows.test_pencil_draw_and_undo_redo) ... ok
 test_pingpong_does_not_duplicate_endpoints (test_workflows.Workflows.test_pingpong_does_not_duplicate_endpoints) ... ok
+test_pinned_reserve_absorbs_trim_and_painting_but_reports_overflow (test_workflows.Workflows.test_pinned_reserve_absorbs_trim_and_painting_but_reports_overflow) ... ok
+test_pinned_slots_survive_reorder_and_keep_sampling_regions (test_workflows.Workflows.test_pinned_slots_survive_reorder_and_keep_sampling_regions) ... ok
 test_pipeline_atomic_rollback (test_workflows.Workflows.test_pipeline_atomic_rollback) ... ok
 test_project_bundle_roundtrip (test_workflows.Workflows.test_project_bundle_roundtrip) ... ok
+test_removed_pinned_frame_is_dropped_without_breaking_versions (test_workflows.Workflows.test_removed_pinned_frame_is_dropped_without_breaking_versions) ... ok
 test_retime_preserves_exact_total (test_workflows.Workflows.test_retime_preserves_exact_total) ... ok
 test_revision_conflict_and_invalid_inputs (test_workflows.Workflows.test_revision_conflict_and_invalid_inputs) ... ok
 test_seam_blend_matches_opposite_edges (test_workflows.Workflows.test_seam_blend_matches_opposite_edges) ... ok
@@ -29,8 +33,9 @@ test_tilemap_fill_paint_and_export (test_workflows.Workflows.test_tilemap_fill_p
 test_tilemap_reference_blocks_frame_deletion (test_workflows.Workflows.test_tilemap_reference_blocks_frame_deletion) ... ok
 test_time_resample_total_preserved (test_workflows.Workflows.test_time_resample_total_preserved) ... ok
 test_transform_tween_end_state (test_workflows.Workflows.test_transform_tween_end_state) ... ok
+test_unpinned_tiles_cannot_claim_pinned_space_or_old_slots (test_workflows.Workflows.test_unpinned_tiles_cannot_claim_pinned_space_or_old_slots) ... ok
 
 ----------------------------------------------------------------------
-Ran 31 tests in 1.112s
+Ran 36 tests in 1.234s
 
 OK

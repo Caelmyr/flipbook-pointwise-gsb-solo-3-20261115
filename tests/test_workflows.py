@@ -330,6 +330,140 @@ class Workflows(unittest.TestCase):
         self.assertEqual(len(response.json['project']['frames']), 2)
         self.assertEqual(len(response.json['regions']), 2)
 
+    def pinned_workspace(self, project, width=64, height=64):
+        created = self.call('POST', self.base(project) + '/atlas-workspaces',
+                            {'name': '游戏图集', 'width': width, 'height': height, 'reserve': 6, 'padding': 1, 'extrude': 1, 'rotate': False, 'revision': project['revision']}, 201)
+        return created, created['atlas_workspaces'][0]['id']
+
+    def build_workspace(self, project, workspace_id, locked, expected=200):
+        payload = {'revision': project['revision'], 'locked': locked}
+        response = self.client.post(self.base(project) + '/atlas-workspaces/' + workspace_id + '/build', json=payload)
+        self.assertEqual(response.status_code, expected, response.json if response.is_json else response.data[:200])
+        return response.json if expected == 200 else None
+
+    def draw_frame(self, project, frame_index, points, color):
+        frame = project['frames'][frame_index]
+        return self.mutate(project, 'frames/' + frame['id'] + '/layers/' + frame['layers'][0]['id'] + '/draw', {
+            'tool': 'rectangle', 'color': color, 'points': points, 'filled': True,
+        })
+
+    def test_pinned_slots_survive_reorder_and_keep_sampling_regions(self):
+        project = self.new(48, 48)
+        project = self.draw_frame(project, 0, [[14, 14], [24, 24]], '#ff0000ff')
+        project = self.mutate(project, 'frames', {'count': 1})
+        project = self.draw_frame(project, 1, [[26, 26], [34, 34]], '#0000ffff')
+        project, workspace_id = self.pinned_workspace(project, 64, 64)
+        first, second = [frame['id'] for frame in project['frames']]
+        project = self.build_workspace(project, workspace_id, [first])
+        version_one = project['atlas_workspaces'][0]['versions'][-1]
+        record = {entry['frame_id']: entry for entry in version_one['entries']}
+        project = self.mutate(project, 'frames/reorder', {'frame_ids': [second, first]})
+        project = self.build_workspace(project, workspace_id, [first, second])
+        workspace = project['atlas_workspaces'][0]
+        self.assertEqual(len(workspace['versions']), 3)
+        version_two = workspace['versions'][-1]
+        fresh = {entry['frame_id']: entry for entry in version_two['entries']}
+        pinned = fresh[first]
+        self.assertEqual(pinned['allocation'], record[first]['allocation'])
+        self.assertEqual(pinned['uv_pixels'], record[first]['uv_pixels'])
+        self.assertEqual(pinned['region'], record[first]['region'])
+        self.assertEqual(pinned['rotated'], record[first]['rotated'])
+        self.assertNotEqual(fresh[second]['uv_pixels'], record[first]['uv_pixels'])
+        for entry in version_two['entries']:
+            other = [item['allocation'] for item in version_two['entries'] if item['frame_id'] != entry['frame_id']]
+            for rectangle in other:
+                overlap = (entry['allocation'][0] < rectangle[0] + rectangle[2]
+                           and entry['allocation'][0] + entry['allocation'][2] > rectangle[0]
+                           and entry['allocation'][1] < rectangle[1] + rectangle[3]
+                           and entry['allocation'][1] + entry['allocation'][3] > rectangle[1])
+                self.assertFalse(overlap)
+        page_one = self.store.image(project['id'], version_one['page_asset'])
+        page_two = self.store.image(project['id'], version_two['page_asset'])
+        first_box = record[first]['uv_pixels']
+        second_box = fresh[first]['uv_pixels']
+        self.assertEqual(page_one.crop((first_box[0], first_box[1], first_box[0] + first_box[2], first_box[1] + first_box[3])).tobytes(),
+                         page_two.crop((second_box[0], second_box[1], second_box[0] + second_box[2], second_box[1] + second_box[3])).tobytes())
+
+    def test_pinned_reserve_absorbs_trim_and_painting_but_reports_overflow(self):
+        project = self.new(32, 32)
+        project = self.draw_frame(project, 0, [[10, 10], [20, 20]], '#ff0000ff')
+        project, workspace_id = self.pinned_workspace(project, 32, 32)
+        frame_id = project['frames'][0]['id']
+        project = self.build_workspace(project, workspace_id, [frame_id])
+        first = project['atlas_workspaces'][0]['versions'][-1]['entries'][0]
+        project = self.draw_frame(project, 0, [[10, 7], [14, 7]], '#00ff00ff')
+        project = self.build_workspace(project, workspace_id, [frame_id])
+        second = project['atlas_workspaces'][0]['versions'][-1]['entries'][0]
+        self.assertEqual(second['uv_pixels'], first['uv_pixels'])
+        self.assertEqual(second['region'], first['region'])
+        project = self.draw_frame(project, 0, [[10, 2], [12, 2]], '#ffff00ff')
+        self.build_workspace(project, workspace_id, [frame_id], 400)
+        self.assertEqual(self.store.get(project['id'])['revision'], project['revision'])
+        self.assertEqual(len(self.store.get(project['id'])['atlas_workspaces'][0]['versions']), 3)
+
+    def test_unpinned_tiles_cannot_claim_pinned_space_or_old_slots(self):
+        project = self.new(32, 32)
+        project = self.draw_frame(project, 0, [[10, 10], [20, 20]], '#ff0000ff')
+        project, workspace_id = self.pinned_workspace(project, 64, 32)
+        first = project['frames'][0]['id']
+        project = self.build_workspace(project, workspace_id, [first])
+        pinned = project['atlas_workspaces'][0]['versions'][-1]['entries'][0]
+        project = self.mutate(project, 'frames', {'count': 1})
+        new_frame = project['frames'][1]['id']
+        project = self.draw_frame(project, 1, [[2, 2], [9, 9]], '#0000ffff')
+        project = self.build_workspace(project, workspace_id, [first])
+        entries = {entry['frame_id']: entry for entry in project['atlas_workspaces'][0]['versions'][-1]['entries']}
+        self.assertEqual(entries[first]['uv_pixels'], pinned['uv_pixels'])
+        fresh = entries[new_frame]
+        left, top, width, height = fresh['allocation']
+        self.assertFalse(left < pinned['allocation'][0] + pinned['allocation'][2] and left + width > pinned['allocation'][0]
+                         and top < pinned['allocation'][1] + pinned['allocation'][3] and top + height > pinned['allocation'][1])
+        self.assertEqual(fresh['region'], [2 - 6, 2 - 6, 10 + 6, 10 + 6])
+
+    def test_compare_reports_identical_releases_and_independent_downloads(self):
+        project = self.new(32, 32)
+        project = self.draw_frame(project, 0, [[10, 10], [20, 20]], '#ff0000ff')
+        project, workspace_id = self.pinned_workspace(project, 48, 48)
+        frame_id = project['frames'][0]['id']
+        project = self.build_workspace(project, workspace_id, [frame_id])
+        project = self.mutate(project, 'frames/reorder', {'frame_ids': [frame_id]})
+        project = self.build_workspace(project, workspace_id, [frame_id])
+        report = self.call('GET', self.base(project) + '/atlas-workspaces/' + workspace_id + '/compare?first=1&second=2')
+        self.assertTrue(report['image_identical'])
+        self.assertEqual(report['changed_pixels'], 0)
+        self.assertEqual(report['moved_frames'], [])
+        entries = report['entries']
+        self.assertEqual(entries[0]['first_slot'], entries[0]['second_slot'])
+        self.assertEqual(entries[0]['first_region'], entries[0]['second_region'])
+        self.assertTrue(entries[0]['pixels_identical'])
+        for number in (1, 2):
+            bundle = self.call('GET', self.base(project) + '/atlas-workspaces/' + workspace_id + '/versions/' + str(number) + '/download')
+            with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
+                manifest = json.loads(archive.read('manifest.json'))
+                self.assertEqual(manifest['version'], number)
+                self.assertEqual(manifest['entries'], self.store.get(project['id'])['atlas_workspaces'][0]['versions'][number - 1]['entries'])
+                version = self.store.get(project['id'])['atlas_workspaces'][0]['versions'][number - 1]
+                self.assertEqual(archive.read('atlas.png'), png_bytes(self.store.image(project['id'], version['page_asset'])))
+
+    def test_removed_pinned_frame_is_dropped_without_breaking_versions(self):
+        project = self.new(32, 32)
+        project = self.draw_frame(project, 0, [[10, 10], [20, 20]], '#ff0000ff')
+        project = self.mutate(project, 'frames', {'count': 1})
+        project, workspace_id = self.pinned_workspace(project, 48, 48)
+        first, second = [frame['id'] for frame in project['frames']]
+        project = self.build_workspace(project, workspace_id, [first])
+        project = self.mutate(project, 'frames/remove', {'frame_ids': [first]})
+        self.assertEqual([frame['id'] for frame in project['frames']], [second])
+        project = self.build_workspace(project, workspace_id, [first])
+        workspace = project['atlas_workspaces'][0]
+        self.assertEqual(len(workspace['versions']), 3)
+        self.assertEqual([entry['frame_id'] for entry in workspace['versions'][-1]['entries']], [second])
+        bundle = self.call('GET', self.base(project) + '/atlas-workspaces/' + workspace_id + '/versions/1/download')
+        with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
+            manifest = json.loads(archive.read('manifest.json'))
+            self.assertEqual(manifest['entries'][0]['frame_id'], first)
+            self.assertIn('atlas.png', archive.namelist())
+
     def test_export_jobs_all_formats(self):
         project = self.demo()
         for kind in ['apng', 'gif', 'webp', 'atlas', 'multipage', 'sheet', 'sequence', 'project', 'palette']:
